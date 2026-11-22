@@ -9,6 +9,7 @@ pip install -r requirements.txt
 mkdocs serve
 ```
 
-## 在线托管（Read the Docs）
+## 在线托管（任选其一）
 
-登录 Read the Docs 导入 `yu830/ai-infra-handbook`，内置的 `.readthedocs.yaml` 会自动完成构建与托管；后续每次推送新章节均会自动更新。
+- **Vercel（已内置 `vercel.json` + `.python-version`）**：在 Vercel 网页端导入 `yu830/ai-infra-handbook` 直接点击 Deploy，无需手动填写构建命令或输出目录。
+- **Read the Docs（已内置 `.readthedocs.yaml`）**：导入 `yu830/ai-infra-handbook` 即可自动构建托管。
