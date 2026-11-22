@@ -1,0 +1,94 @@
+/* 极简工程文档主题：去 AI 蓝、高对比黑白灰、舒适阅读宽度 */
+:root {
+  --md-primary-fg-color: #ffffff;
+  --md-primary-bg-color: #18181b;
+  --md-accent-fg-color: #0f766e;
+  --md-typeset-a-color: #18181b;
+  --md-default-bg-color: #fcfcfc;
+  --md-default-fg-color: #27272a;
+  --md-default-fg-color--light: #52525b;
+  --md-code-bg-color: #f4f4f5;
+  --md-code-fg-color: #18181b;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #111113;
+  --md-primary-bg-color: #f4f4f5;
+  --md-default-bg-color: #111113;
+  --md-typeset-a-color: #e4e4e7;
+  --md-accent-fg-color: #5eead4;
+}
+
+.md-header {
+  border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+  box-shadow: none !important;
+}
+
+.md-tabs {
+  border-bottom: 1px solid rgba(24, 24, 27, 0.08);
+}
+
+.md-typeset {
+  font-size: 0.78rem;
+  line-height: 1.72;
+}
+
+.md-typeset h1 {
+  color: #18181b;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 1rem;
+}
+
+.md-typeset h2 {
+  color: #18181b;
+  font-weight: 700;
+  border-bottom: 1px solid #e4e4e7;
+  padding-bottom: 0.35rem;
+  margin-top: 2rem;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2 {
+  color: #f4f4f5;
+  border-bottom-color: #27272a;
+}
+
+.md-typeset a {
+  text-decoration: underline;
+  text-decoration-color: rgba(24, 24, 27, 0.28);
+  text-underline-offset: 3px;
+}
+
+.md-typeset a:hover {
+  color: #0f766e;
+  text-decoration-color: #0f766e;
+}
+
+.md-typeset table:not([class]) {
+  border: none;
+  box-shadow: none;
+  font-size: 0.74rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: #f4f4f5;
+  color: #18181b;
+  font-weight: 700;
+  border-bottom: 1.5px solid #d4d4d8;
+}
+
+.md-typeset table:not([class]) td {
+  border-top: 1px solid #e4e4e7;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background-color: #1e1e22;
+  color: #f4f4f5;
+  border-bottom-color: #3f3f46;
+}
+
+.md-typeset img {
+  border-radius: 6px;
+  border: 1px solid rgba(24, 24, 27, 0.08);
+}

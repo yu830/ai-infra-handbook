@@ -1,0 +1,73 @@
+site_name: AI Infra 技术手册
+site_description: 极简、高密度、物理约束驱动的大模型推理与底层系统工程手册
+docs_dir: docs
+
+theme:
+  name: material
+  language: zh
+  font:
+    text: Noto Sans SC
+    code: JetBrains Mono
+  palette:
+    - scheme: default
+      primary: white
+      accent: black
+      toggle:
+        icon: material/brightness-7
+        name: 切换深色模式
+    - scheme: slate
+      primary: black
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: 切换浅色模式
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - 首页: index.md
+  - 推理引擎架构:
+      - 物理本质与调度循环: inference/roofline-and-batching.md
+      - KV 缓存与 CUDA Graph: inference/kv-cache-and-cudagraph.md
+      - P/D 分离与生产排障: inference/pd-disaggregation.md
+  - 算子与底层优化:
+      - GPU 显存层次与 Tiling: kernels/gpu-memory-and-tiling.md
+  - 后训练与 RL 系统:
+      - 概览与扩展路线: post-training/index.md

@@ -1,0 +1,28 @@
+<svg viewBox="0 0 820 220" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Noto Sans SC, sans-serif">
+  <rect width="820" height="220" rx="8" fill="#fafafa" stroke="#e4e4e7"/>
+  <text x="24" y="30" font-size="13" font-weight="700" fill="#18181b">现代大模型推理引擎多进程与零开销重叠调度全景</text>
+  <rect x="24" y="54" width="160" height="68" rx="6" fill="#f4f4f5" stroke="#18181b" stroke-width="1.2"/>
+  <text x="104" y="80" font-size="12" font-weight="700" fill="#18181b" text-anchor="middle">API Server / Router</text>
+  <text x="104" y="100" font-size="10.5" fill="#52525b" text-anchor="middle">HTTP · Tokenizer · 路由</text>
+  <line x1="184" y1="88" x2="230" y2="88" stroke="#18181b" stroke-width="1.5"/>
+  <polygon points="234,88 226,84 226,92" fill="#18181b"/>
+  <text x="208" y="80" font-size="10" font-weight="700" fill="#c25432" text-anchor="middle">ZMQ</text>
+  <rect x="236" y="54" width="200" height="68" rx="6" fill="#ffffff" stroke="#18181b" stroke-width="1.5"/>
+  <text x="336" y="80" font-size="12" font-weight="700" fill="#18181b" text-anchor="middle">EngineCore / CPU Scheduler</text>
+  <text x="336" y="100" font-size="10.5" fill="#52525b" text-anchor="middle">提前 1 步组装块表与批元数据</text>
+  <line x1="436" y1="88" x2="486" y2="88" stroke="#0f766e" stroke-width="1.8"/>
+  <polygon points="490,88 482,84 482,92" fill="#0f766e"/>
+  <text x="462" y="80" font-size="10" font-weight="700" fill="#0f766e" text-anchor="middle">SHM</text>
+  <rect x="492" y="54" width="174" height="68" rx="6" fill="#18181b"/>
+  <text x="579" y="80" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">GPU Workers (TP / EP)</text>
+  <text x="579" y="100" font-size="10.5" fill="#d4d4d8" text-anchor="middle">CUDA Graph · FlashInfer</text>
+  <line x1="666" y1="88" x2="696" y2="88" stroke="#18181b" stroke-width="1.5"/>
+  <polygon points="700,88 692,84 692,92" fill="#18181b"/>
+  <rect x="702" y="54" width="96" height="68" rx="6" fill="#f4f4f5" stroke="#18181b" stroke-width="1.2"/>
+  <text x="750" y="80" font-size="12" font-weight="700" fill="#18181b" text-anchor="middle">Detokenizer</text>
+  <text x="750" y="100" font-size="10.5" fill="#52525b" text-anchor="middle">SSE 流式返回</text>
+  <rect x="24" y="144" width="774" height="54" rx="5" fill="#f4f4f5"/>
+  <text x="42" y="167" font-size="11" font-weight="700" fill="#18181b">Zero-Overhead Overlap 流水线：</text>
+  <text x="234" y="167" font-size="11" fill="#27272a">CPU 在 GPU 执行 Step k 时并行准备 Step k+1，隐藏 Python 调度气泡</text>
+  <text x="42" y="187" font-size="10.5" fill="#52525b">核心代价：EOS 采样结果延迟一拍回收（最多多算 1 步），请求中止状态机需同步双端生命周期</text>
+</svg>
