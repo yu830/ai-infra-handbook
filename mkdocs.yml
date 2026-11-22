@@ -1,5 +1,5 @@
-site_name: AI Infra 技术手册
-site_description: 极简、高密度、物理约束驱动的大模型推理与底层系统工程手册
+site_name: AI Infra 面试作战手册
+site_description: 面向大模型推理引擎研发工程师面试的深度系统工程与项目深挖手册
 docs_dir: docs
 
 theme:
@@ -10,8 +10,8 @@ theme:
     code: JetBrains Mono
   palette:
     - scheme: default
-      primary: white
-      accent: black
+      primary: black
+      accent: teal
       toggle:
         icon: material/brightness-7
         name: 切换深色模式
@@ -23,7 +23,9 @@ theme:
         name: 切换浅色模式
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
+    - navigation.expand
     - navigation.indexes
     - navigation.top
     - toc.follow
@@ -62,12 +64,12 @@ markdown_extensions:
       alternate_style: true
 
 nav:
-  - 首页: index.md
-  - 推理引擎架构:
-      - 物理本质与调度循环: inference/roofline-and-batching.md
-      - KV 缓存与 CUDA Graph: inference/kv-cache-and-cudagraph.md
-      - P/D 分离与生产排障: inference/pd-disaggregation.md
-  - 算子与底层优化:
-      - GPU 显存层次与 Tiling: kernels/gpu-memory-and-tiling.md
-  - 后训练与 RL 系统:
-      - 概览与扩展路线: post-training/index.md
+  - 面试总览: index.md
+  - 核心原理深度拆解:
+      - 01. 物理边界、手算算例与调度循环: inference/roofline-and-batching.md
+      - 02. KV 缓存、MLA 与 CUDA Graph: inference/kv-cache-and-cudagraph.md
+      - 03. P/D 分离与国产芯片适配: inference/pd-disaggregation.md
+      - 04. GPU 显存层次、算子融合与量化: kernels/gpu-memory-and-tiling.md
+  - 实战项目与面试压轴:
+      - 05. 个人核心项目与 PR 深挖防御: interview/project-deep-dive.md
+      - 06. 高频系统设计、业务题与反问: interview/qa-and-business.md

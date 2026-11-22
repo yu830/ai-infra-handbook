@@ -1,19 +1,21 @@
-# AI Infra 技术手册
+# 曦望 Sunrise · 大模型推理引擎研发工程师面试作战手册
 
-本手册聚焦大模型推理引擎、GPU 算子优化与后训练系统的底层物理约束与工程权衡，采用极简三栏工程文档结构组织。
+> 面向 **2026 年 11 月 23 日 15:00（北京时间）** 曦望（Sunrise / 上海阵量智能）视频面试定制，覆盖底层推理物理模型、源码级机制、国产 GPGPU 软件栈适配，以及你个人核心项目与开源 PR 的深度防御策略。
 
-![大模型推理系统全景架构](assets/images/serving-pipeline.svg)
+## 1. 目标公司与岗位速览
 
-## 知识库导航
-
-| 模块 | 核心覆盖内容 | 入口 |
+| 维度 | 关键信息（公开资料与面试邀约） | 面试切入点 |
 | :--- | :--- | :--- |
-| **物理本质与调度循环** | Prefill / Decode Roofline 边界、KV 显存公式、Continuous Batching、Chunked Prefill 与零开销重叠调度 | [阅读本章](inference/roofline-and-batching.md) |
-| **KV 缓存与 CUDA Graph** | PagedAttention 页表映射、RadixAttention 前缀树、GQA / MLA 压缩与 vLLM V1 分段 CUDA Graph | [阅读本章](inference/kv-cache-and-cudagraph.md) |
-| **P/D 分离与生产排障** | DistServe 集群分离、Push 型 RDMA 传输、Deferred Release 竞态隔离与 ZMQ 控制面尾延迟观测 | [阅读本章](inference/pd-disaggregation.md) |
-| **GPU 显存层次与 Tiling** | HBM / L2 / SRAM 访存带宽、Online Softmax 与 FlashAttention 访存复杂度、Small-M GEMM Tiling | [阅读本章](kernels/gpu-memory-and-tiling.md) |
+| **公司与团队** | **曦望（Sunrise / 上海阵量智能）**，拆分自商汤芯片与架构部，核心骨干来自 AMD、百度昆仑芯、华为海思、商汤（[财联社](https://www.cls.cn/detail/2248341)） | 强调你对「芯片架构约束 → 编译器/算子 → 推理引擎调度」跨层协同的理解 |
+| **核心硬件路线** | **启望 S2**（7nm 大模型推理 GPGPU，兼容 CUDA 生态，对标 A100 约 80% 性能，已量产）；**启望 S3**（下一代多模态推理芯片，目标成本降 90%）（[钛媒体](https://www.tmtpost.com/7630475.html)） | 紧扣「单位 Token 推理成本」「显存带宽利用率」「多模态/长上下文 Goodput」 |
+| **开源软件栈** | 深度参与 [FlagOS 2.0](https://github.com/flagos-ai/FlagRelease/issues/5) 生态（`FlagTree` 统一 Triton 编译器、`FlagGems` 算子库、`vllm-plugin-FL` 注意力后端移植、`FlagGems-SGLang`） | **王牌命中**：你本人的 `FlagGems` PR #9124 直接修复了 Sunrise / SGLang Qwen3-4B 的 GQA 故障 |
+| **本轮考察重点** | 邀约明确说明：**通用型业务问题 + 过往项目经历 + 价值观与软性技能** | 不是纯八股背诵，重点考**工程判断力、排障闭环思维、真实贡献深度与团队协作** |
 
-## 编写约定
+## 2. 考前冲刺阅读顺序（按优先级）
 
-- **中英文与数字混排**：严格在中英文及中文与数字间保留半角空格，代码标识符使用行内代码，数学关系使用 LaTeX 公式。
-- **物理约束优先**：每个系统机制均按「核心痛点 → 数学直觉与维度 → 工程权衡 → 边界与坑点」展开，不堆砌营销式概述。
+1. **必背项目深挖（35% 精力）**：先过 [05. 个人核心项目与 PR 深挖防御](interview/project-deep-dive.md) —— 确保 `FlagGems #9124`、`GraphBudget`、`SGLang #46596`、`llama.cpp #29576` 的每个数字、根因和追问都脱口而出。
+2. **业务与系统设计（35% 精力）**：精读 [06. 高频系统设计、业务题与反问](interview/qa-and-business.md) 与 [03. P/D 分离与国产芯片适配](inference/pd-disaggregation.md) —— 练熟如何从业务 SLO（TTFT / TPOT / 单位 Token 成本）反推引擎架构选型。
+3. **底层硬核原理与手算（30% 精力）**：速查 [01. 物理边界、手算算例与调度循环](inference/roofline-and-batching.md)、[02. KV 缓存、MLA 与 CUDA Graph](inference/kv-cache-and-cudagraph.md) 和 [04. GPU 显存层次、算子融合与量化](kernels/gpu-memory-and-tiling.md) —— 保证白板手算 70B 显存、Online Softmax 公式、Paged/Radix 细节零卡壳。
+
+!!! tip "本轮面试的核心气场定位"
+    不要把自己定位成「背过几篇论文的在校生」，而是定位成「**真正在 SGLang / vLLM / llama.cpp / FlashInfer / FlagGems 上游提过代码、踩过硬件与 IPC 真实坑点的系统工程师**」。回答任何业务问题，都按「**约束量化（Roofline / VRAM）→ 机制选型 → 实测验证与兜底**」三段式展开。

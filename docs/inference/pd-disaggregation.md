@@ -1,22 +1,48 @@
-# P/D 分离与生产排障
+# 03. P/D 分离与国产芯片适配
 
-当集群规模扩大且长上下文与严苛 TPOT SLO 并存时，单节点 Chunked Prefill 仍受限于共享 HBM 带宽与统一并行度。[DistServe](https://arxiv.org/abs/2401.09670) 将 Prefill 与 Decode 物理拆至独立 GPU 池，通过 NVLink / RDMA / NIXL 跨节点传输 KV Cache。
+本章直接对应曦望（Sunrise）大模型推理引擎岗位的两大核心业务场景：**大规模集群 P/D 分离部署**与**国产 GPGPU 硬件软件栈适配**。
 
-![Prefill 与 Decode 物理分离及 RDMA 传输](../assets/images/pd-disaggregation.svg)
+## 1. 为什么单节点 Chunked Prefill 在大规模集群会失效？
 
-## 1. Push 型 RDMA 传输的关键安全不变量
+即使启用了 Chunked Prefill，Prefill 与 Decode 在同一张卡上混跑仍有三个无法根除的矛盾（[DistServe, OSDI 2024](https://arxiv.org/abs/2401.09670)）：
 
-在 [LMSYS 2026-10-26 工程报告](https://www.lmsys.org/blog/2026-10-26-cf-security/) 披露的 P/D 分离生产案例中，请求异常中止会暴露一类极隐蔽的内存生命周期竞态：
+1. **并行策略冲突**：Prefill 偏好较小 TP 或 PP 以减少通信占比、压低 TTFT；Decode 偏好较大 DP + 大 Batch（甚至 MoE 下的 Expert Parallelism）以最大化 HBM 带宽利用率。
+2. **HBM 带宽争抢**：Chunked Prefill 每次切块仍要重读前缀 KV，在高并发长上下文下会持续挤占 Decode 的带宽窗口。
+3. **异构硬件无法匹配**：Prefill 需要高算力卡（Compute-heavy），Decode 更看重高显存容量与高 HBM 带宽（Memory-heavy）；P/D 分离后允许两池使用不同配比甚至不同型号的推理卡。
 
-1. **已下发网卡的 RDMA 写不可撤回**：SGLang 采用 Push 型分块 RDMA 传输以实现计算-通信重叠，窗口长度随 Prompt 长度线性拉长。
-2. **两阶段释放条件（Deferred Release）**：Decode 侧的 KV 槽位只有在「本地逻辑已释放」**且**「所有指向该地址的远端在途 RDMA 写全部完成」两个条件同时成立后，才允许重新分配给新请求，否则迟到写入会静默污染新会话输出。
-3. **Router 成对中止（Paired Abort）**：中止信号必须由 Router 同时通知 Prefill 与 Decode 双方，避免单侧空等数百秒直至超时。
+## 2. P/D 分离数据面与 RDMA 生命周期竞态
 
-## 2. 生产级工程调优清单
+```mermaid
+sequenceDiagram
+    participant R as PD Router
+    participant P as Prefill Pool (高算力)
+    participant D as Decode Pool (高带宽)
+    R->>D: 1. 控制面 Pre-reserve 目标 KV 槽位
+    R->>P: 2. 下发 Prompt
+    loop 分块计算与传输重叠
+        P->>D: 3. Push KV Chunk (RDMA / NIXL)
+    end
+    Note over P,D: 关键竞态：已提交网卡的 In-Flight RDMA 写不可取消
+    D-->>D: 4. Deferred Release：本地释放 ∧ 远端在途写全完成 → 才允许复用槽位
+```
 
-| 排障维度 | 核心不变量 / 调优手段 | 典型失效现象 |
+### 生产级高危故障复盘（面试加分杀手锏）
+
+结合 [LMSYS 2026-10-26 安全与隔离更新](https://www.lmsys.org/blog/2026-10-26-cf-security/) 披露的真实生产事故，答出以下三点能让面试官立刻看出你的生产级工程视野：
+
+1. **准入边界校验**：必须确保 `max_context_length <= prefill_kv_pool_capacity`，且被拒绝的请求必须在进入 P/D 跨节点交接前即返回错误，严禁让 Decode 读取未初始化的 KV 页。
+2. **Deferred Release（延迟释放）**：在 Push 型分块 RDMA 传输中，如果客户端中途断开（Abort），已下发给 NIC 的 RDMA Write 无法撤回。Decode 分配器判断一个槽位「真正空闲（Free）」必须同时满足两个条件：**本地已释放** + **无任何远端在途写（In-Flight Writes）可触达该地址**，否则迟到写入会静默覆写新用户的 KV Cache。
+3. **Router 成对中止（Paired Abort）**：中止必须由 Router 同时通知 Prefill 与 Decode 双方，否则对端会傻等数百秒直至超时，拖垮整个连接池。
+
+## 3. 国产 GPGPU（曦望 S2/S3 · CUDA 兼容 · FlagOS）适配核心挑战
+
+!!! note "为什么面试官一定会问这个问题"
+    曦望的核心竞争力在于「兼容 CUDA 生态 + 深度参与 FlagOS 2.0（FlagTree / FlagGems / vLLM / SGLang）」，推理引擎研发工程师每天面对的真实业务问题，就是**如何让主流开源大模型在自研芯片上 Day-0 跑通、跑准、跑快**。
+
+| 适配层级 | 常见痛点与故障模式 | 工程解法与落地方案 |
 | :--- | :--- | :--- |
-| **P/D 准入校验** | 部署前强校验 `max_context_length <= prefill_kv_pool_capacity`，被拒请求禁止进入跨节点交接 | 请求超出 KV 池容量后仍进入 Decode 读取未初始化页 |
-| **Chunked Prefill 预算** | 围绕硬件 $I_{\text{ridge}}$ 实测标定 `max_num_batched_tokens` | 过小导致 TTFT 劣化；过大导致并发 Decode TPOT P99 飙升 |
-| **CUDA Graph 显存预算** | 限制离散捕获点数，避免静态图显存池挤占 KV Cache 块数 | 高并发下频繁触发 KV 抢占（Preemption）与重算 |
-| **跨进程 IPC 尾延迟** | 在 `Scheduler → Detokenizer → Router` 的 ZMQ 消息头注入单调时钟戳 | 纯 GPU Profiling 显示空闲，但端到端延迟居高不下 |
+| **1. Attention 后端移植** | FlashAttention / FlashInfer 依赖大量 NVIDIA PTX 汇编与特定 SM 架构（如 TMA / WGMMA），在非 NV 芯片或新架构上无法直接编译 | 通过插件化后端机制（如 `vllm-plugin-FL`）对接自研高效 Attention；同时确保 **Generic Math SDPA Fallback** 路径 100% 正确（如你修复的 `FlagGems #9124` GQA 支持），保证新模型 Day-0 可跑通与精度基线对齐 |
+| **2. Triton / FlagTree 编译** | 不同硬件的 SRAM 容量、Warp/Wavefront 大小、寄存器文件数不同，直接照搬 NVIDIA 的 `BLOCK_M/N/K` 会导致严重 Register Spilling 或 Shared Memory OOM | 借助 [FlagTree](https://github.com/flagos-ai/flagtree) 多后端编译器，建立按硬件 Profile 自动寻优的 Autotune Config，避免硬编码 SM 参数 |
+| **3. 静态图（CUDA Graph）适配** | 国产驱动/运行时对 Graph Capture 中动态内存分配、多 Stream Event 同步或自定义通信算子的兼容性边界较敏感 | 优先打通纯 Decode Full Graph，混合批采用 Piecewise Graph 将高风险算子留在图外；建立逐算子 Capture 冒烟测试 |
+| **4. 精度对齐与数值漂移** | BF16/FP16 累加顺序差异、整数比较/类型隐式转换差异、长序列 `int32` 索引溢出 | 建立「CPU FP32 Golden Reference → 逐层 Cosine Similarity & Max Abs Diff → 端到端 Logprobs 对比」自动化验收流水线 |
+| **5. 算子覆盖与性能归因** | 某些冷门算子意外 Fallback 到 PyTorch CPU 或未融合的小算子，拖垮整条推理链路 | 通过 Profiler + Roofline 模型区分 Compute-bound / Memory-bound / Launch-bound，优先融合热点访存算子（RMSNorm、RoPE、SwiGLU、KV Cache Write） |
