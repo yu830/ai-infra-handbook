@@ -1,230 +1,313 @@
-# 曦望（Sunrise）二面 · 大模型推理引擎研发工程师作战手册
+# 曦望（Sunrise）大模型推理引擎研发实习 · 二面复习手册
 
-> **面试时间**：2026 年 11 月 23 日 15:00（北京时间）｜**公司**：曦望（上海阵量智能科技有限公司）｜**本页为单页无跳转完整版**，直接向下滚动或点击右侧目录平滑定位。
+> 面试时间：2026 年 11 月 23 日（周一）15:00 CST（飞书视频）  
+> 依据材料：投递简历（`AI_Infra_Intern_Resume_ZH_20261029`）、一面提问记录、二面考察范围（通用业务、过往项目、价值观与软性技能）  
+> 内容形式：全口述表达，不含公式推导与手算，重点覆盖简历所写技术点与项目细节。
 
----
+## 一、一面反思
 
-## 一、一面复盘排雷（明天必须彻底补齐的 4 个硬伤）
+### 1.1 问题汇总
 
-回顾 2026-11-13 一面录音，面试官非常友善且直接点出了你在底层概念和实操定位上的 4 个薄弱点。二面技术负责人/业务面极可能顺着一面评语复查这些点，**每一条都必须能脱口而出**。
+一面主要围绕简历中的“专业技能”和项目经历逐项追问底层原理与工具用法。复盘后需要修正的 4 点如下：
 
-### 1.1 排雷 1：GEMM 矩阵分块（Tiling）的硬件本质
-
-- **一面失分点**：回答成了「Transformer 矩阵多，分块提高并行度」，面试官明确反馈「第一个问题没答出来导致后面不好问」。
-- **标准满分答法（30 秒直击本质）**：
-  - **核心目的不是提高并行度，而是利用片上 Shared Memory / Registers 做数据复用（Data Reuse），大幅减少对慢速 Global Memory（HBM）的重复搬运，从而提高算术强度（Arithmetic Intensity）**。
-  - 量化推导：计算 $C = A \times B$（$A \in \mathbb{R}^{M \times K}, B \in \mathbb{R}^{K \times N}$），总计算量 $2MNK$ FLOPs。
-    - **不分块**：计算 $C$ 的每个元素都要读 $A$ 的一行（$K$）和 $B$ 的一列（$K$），总 HBM 访存量高达 $2MNK$ 个元素，算术强度仅 $\approx 1$（严重 Memory-bound）。
-    - **分块（$B_M \times B_N \times B_K$）**：每个 CTA 负责输出 $B_M \times B_N$ 的 Tile，沿 $K$ 维每次把 $A$ 的 $B_M \times B_K$ 块和 $B$ 的 $B_K \times B_N$ 块搬入片上 Shared Memory。在片上计算外积时，**$A$ 块中每个元素被复用 $B_N$ 次，$B$ 块中每个元素被复用 $B_M$ 次**。
-    - **访存压缩比**：总 HBM 访存量降至 $MNK \left(\frac{1}{B_N} + \frac{1}{B_M}\right)$，相比不分块直接压缩约 **$\frac{B_M B_N}{B_M + B_N}$ 倍**（如 $B_M = B_N = 128$ 时访存直降 **64 倍**）。
-
-### 1.2 排雷 2：Nsight Systems（`nsys`）实战判读与 `NVTX`
-
-- **一面失分点**：① 把 `nsys stats` 指标答成了 TTFT/TPOT；② 没用过 `NVTX`；③ 把「GPU 紧密跑 Kernel + CPU 长 `Sync` + `Memcpy`」误判成 CPU 传 GPU 太慢。
-- **标准满分答法**：
-  1. **`nsys` vs. `ncu` 分工**：`nsys` 看**系统级时间线**（CPU 线程、CUDA API、Kernel、Memcpy、Stream 依赖、NCCL 通信），回答「端到端时间花在哪、GPU 为什么空转」；`ncu` 看**单个 Kernel 微架构指标**（SM/Tensor Core 吞吐、HBM 带宽、L2 命中率、Warp Stall、Register/SMEM 占用），回答「单个 Kernel 为什么慢」。
-  2. **`nsys stats` 最常用的 3 张汇总表**：
-     - `cuda_gpu_kern_sum`：各 GPU Kernel 的总耗时占比（Time%）、调用次数（Instances）、平均/最小/最大耗时；
-     - `cuda_api_sum`：CPU 侧 CUDA Runtime/Driver API 耗时（重点盯 `cudaStreamSynchronize`、`cudaLaunchKernel`、`cudaMemcpyAsync`）；
-     - `cuda_gpu_mem_time_sum`：H2D / D2H / D2D 内存拷贝耗时与传输量。
-  3. **`NVTX`（NVIDIA Tools Extension）的作用**：在 Python/C++ 代码里通过 `torch.cuda.nvtx.range("prefill")` 或 `nvtx.range_push/pop` 给业务阶段打标签，让 `nsys` 时间线把底层成百上千个零碎 Kernel 和高层框架阶段（Scheduler / Prefill / Decode / Sampling）一一对应起来。
-  4. **经典时间线判读（一面原题复盘）**：
-     - **现象 A（一面原题）**：GPU 上 Kernel A / B 紧密交替跑（几乎无空隙），同时 CPU 有一条长长的 `cudaStreamSynchronize`，紧接着一段 `Memcpy(D2H)`。
-       - **正确结论**：**这是典型的 GPU-bound（计算满载）下的同步等待**——CPU 早已异步把 Kernel 全发射进队列，停在 `Sync` 上干等 GPU 算完才能把结果（如 Decode 采样后的 token_id）拷回 Host。解决同步阻塞的办法是 **Zero-Overhead Overlap Scheduling**（提前发射下一步，延迟一拍回收结果）。
-     - **现象 B（反例对比）**：GPU 上 Kernel 之间出现大量白色空洞（Bubbles），CPU 线程持续满载跑 Python 逻辑与高频 `cudaLaunchKernel`。
-       - **正确结论**：**这是 CPU-bound / Launch-bound**，解法是 **CUDA Graph**（消除单步 Launch 开销）+ 算子融合 + 多进程解耦控制面。
-
-### 1.3 排雷 3：性能基准指标（Min vs. Median vs. P99）
-
-- **一面失分点**：面试官追问「衡量单个 Kernel / Task 在理想无干扰下的确定性耗时，为什么不用中位数？最理想指标是什么？」未能答出「最小值」。
-- **标准满分答法（分层口径）**：
-  - **底层算子 / 单 Kernel 物理下界看 `Min`（最小值）**：系统噪声、OS 调度、频率波动只会**增加**耗时，不可能把硬件算得比物理极限更快；因此 `Min` 最接近无干扰理想执行时间。
-  - **端到端 A/B 实验稳健对比看 `Median` + `IQR`（配合交错 A/B 与 AA 校验）**：过滤偶发环境毛刺，同时验证两组基线方差可控（如 GraphBudget 的 5 组交错 A/B）。
-  - **线上服务用户体验（SLA）看 `P95 / P99` 尾延迟**：真实用户会被长尾请求拖慢，不能只报中位数掩盖长尾抖动。
-  - **测量纪律**：必须做 Warmup、锁 GPU 频率（或记录频率）、计时前后加 `torch.cuda.synchronize()`，避免只测到异步 Enqueue 耗时。
-
-### 1.4 排雷 4：自我介绍与实习出勤沟通
-
-- **自我介绍补齐专业技能（60 秒精炼版）**：
-  > 「面试官您好，我是哈尔滨工程大学电子信息工程 28 届本科生喻嘉城，技术栈以 Python / C++、Triton 算子开发、CUDA 执行模型与 SGLang / llama.cpp 推理运行时为主。近期主要有三块硬核产出：第一是自研 `GraphBudget`，基于 trace 定位并优化 SGLang BF16 小 M GEMM，在 16 并发下把确定性 Decode 有效输出吞吐提升 72.4%；第二是在 FlagOS 第二季 SGLang 算子赛中，AWQ 4-bit 反量化拿了第 2 名（平台平均 29.46×、昆仑芯 47.23×），分段 LoRA K 投影拿了第 3 名（10.74×）；第三是在 SGLang、FlagGems 和 llama.cpp 上游提交了多个可观测性、算子正确性（含 Sunrise/SGLang Qwen3-4B 的 GQA 修复）与 Pinned Memory 减半 PR。另外我还做过 VeRL FSDP2 后训练 Teacher 打分的显存优化。」
-- **实习时间务实表态（吸取一面教训）**：
-  > 「2027 年 1 月中旬寒假起即可全职每周 5 天到岗；大三下学期课表已核对，课程很少且已和学院/导师沟通好集中处理期末考试。为了保证排期绝对可靠、绝不因为偶发校内事务耽误交付，**开学后我保守承诺稳定每周 4 天，寒假和无课周可以 5 天**，连续实习 6 个月以上。」
-
----
-
-## 二、JD 逐条对齐：大模型推理引擎核心体系
-
-对照曦望 JD 全部 5 条职责与 6 条加分项，把所有必考技术点浓缩在同一套「物理约束 → 机制 → 权衡」框架下。
-
-### 2.1 Prefill vs. Decode 与 70B 推理卡现场手算
-
-| 维度 | Prefill（预填充） | Decode（解码） |
+| 对应项 | 一面情况 | 修正方向 |
 | :--- | :--- | :--- |
-| **算子形态与张量维度** | GEMM：`[B·S, d] × [d, d_out]` | GEMV / Small-M GEMM：`[B, d] × [d, d_out]` |
-| **主导瓶颈** | **Compute-Bound**（Tensor Core 峰值算力） | **Memory-Bandwidth-Bound**（HBM 权重 + KV 带宽） |
-| **核心 SLO** | **TTFT**（首字延迟） | **TPOT**（生成间隔） |
-| **并行度偏好** | 适度 TP 降单请求延迟 | 大 Batch / 高 DP 摊薄权重读取 |
+| GEMM 分块 | 回答偏向“切小块提高并行度”，未答到访存本质。 | 先答核心目的是利用片上缓存做数据复用、降低 HBM 访存，再补充对算术强度和并行调度的影响。 |
+| Nsight Systems | 将 `nsys stats` 指标与推理业务指标（TTFT/TPOT）混淆；未答出 `NVTX` 用法；将“GPU 紧凑执行 + CPU 长 Sync/Memcpy”误判为 H2D 拷贝慢。 | 明确 `nsys stats` 的核心统计表、`NVTX` 区间标记作用，以及三类常见时间线瓶颈的判断依据。 |
+| 性能评测指标 | 未第一时间答出单算子下界应看最小值（`Min`）。 | 按场景区分单算子下界（`Min`）、端到端对照实验（交错配对 `Median`）与线上服务尾延迟（`P95/P99`）。 |
+| 自我介绍与出勤 | 自我介绍遗漏技术栈；简历写每周 5 天，面试官考虑大三课业调整记录为每周 4 天。 | 自我介绍补全语言、框架与工具栈；二面主动、客观说明每周稳定出勤 4 天。 |
 
-!!! example "白板手算模板：Llama-3-70B (BF16) 部署在 4×80 GB 推理卡（A100 / 启望 S2 级）"
-    - **模型参数**：$W = 70\text{B}, L = 80, n_q = 64, n_{\text{kv}} = 8\text{ (GQA)}, d_h = 128, p = 2\text{ Bytes (BF16)}$。
-    - **单卡假设**：80 GB HBM，312 TFLOP/s BF16，2.0 TB/s HBM 带宽，4 卡 TP=4。
-    1. **静态权重**：$70\text{B} \times 2\text{ B} = 140\text{ GB} \implies$ 单卡 **35 GB**；预留 10 GB 给激活与 CUDA Graph 池，单卡可用 KV 约 **35 GB**（4 卡共 140 GB）。
-    2. **单 Token KV 显存**：
-       $$
-       M_{\text{KV}} = 2 \cdot L \cdot n_{\text{kv}} \cdot d_h \cdot p = 2 \times 80 \times 8 \times 128 \times 2 = 320\text{ KB / token}
-       $$
-       平均长度 $\bar{S} = 4096$ 时，单请求占 **1.25 GB** $\implies$ 最大并发 $B_{\max} = 140 / 1.25 \approx \mathbf{112}$。
-    3. **Roofline 拐点**：$I_{\text{ridge}} = 312 / 2.0 = \mathbf{156\text{ FLOPs/Byte}}$；BF16 Decode 忽略 KV 时 $I_{\text{decode}} \approx B$，需较大 Batch 才能打满算力。
-    4. **理论最快 TPOT（$B=1$）**：$35\text{ GB} / 2.0\text{ TB/s} = \mathbf{17.5\text{ ms / token}}$（未计 TP AllReduce 与 KV 读）。
+### 1.2 一面原题复盘（口述版）
 
-### 2.2 调度循环与多进程解耦（Continuous Batching / Chunked Prefill / Overlap）
+#### Q1：GEMM 分块（Tiling）为什么能加速？（对应简历“了解 CUDA 与 GEMM 分块”）
 
-```mermaid
-flowchart LR
-    A["API Server / Router<br/>HTTP · Tokenizer · Cache-Aware"] -->|ZMQ| B["EngineCore / CPU Scheduler<br/>Continuous Batching · Block Table · FSM"]
-    B -->|"SHM / IPC<br/>提前 1 步下发 Step k+1"| C["GPU Workers (TP/EP)<br/>CUDA Graph · FlashInfer · Sampling"]
-    C -->|延迟 1 拍回收 Token| D["Detokenizer<br/>异步解码 · SSE 流式输出"]
-```
+> “GEMM 分块最核心的目的不是提高并行度，而是**通过片上数据复用，大幅减少对全局显存（HBM / Global Memory）的重复读取**。
+>
+> 如果不做分块，直接让每个线程计算输出矩阵 `C` 里的一个元素，那么每算一个点，都要把矩阵 `A` 的一整行和矩阵 `B` 的一整列从 HBM 里读一遍。同一个元素会被相邻线程从 HBM 反复读取成百上千次。GPU 的计算能力远高于 HBM 带宽，这种写法会立刻卡在显存带宽上，计算单元大部分时间都在空等数据。
+>
+> 做了分块之后，我们把输出矩阵 `C` 切成一个个小块（Tile），交给不同的 Thread Block（CTA）去算。计算时沿 `K` 维循环，每次把 `A` 和 `B` 对应的一个小块从 HBM 协作加载到片上的 Shared Memory 里，再进一步加载到每个线程的寄存器（Register）里做乘加累加。这样从 HBM 搬进来的一次数据，在 Shared Memory 和寄存器里会被复用很多次。对 HBM 的总访存量成倍下降，算术强度（每字节访存对应的计算量）提高，Tensor Core 或 FP32 算力单元才能真正跑满。
+>
+> 在此基础上，分块尺寸还要兼顾硬件资源：块太小，数据复用率不够；块太大，Shared Memory 和寄存器占用过多，会导致每个 SM 上能同时驻留的 Block 数量（Occupancy）下降，或者发生寄存器溢出。实际调优时就是根据矩阵形状（比如 Prefill 大 M 还是 Decode 小 M）去选合适的 `BM / BN / BK`。”
 
-| 调度范式 | 代表系统 | 核心机制 | 收益与工程代价 |
-| :--- | :--- | :--- | :--- |
-| **连续批处理** | [Orca](https://www.usenix.org/conference/osdi22/presentation/yu) | 迭代级（Iteration-level）动态进出批，单步完成即释放 KV 槽位 | 消除静态批木桶效应；但长 Prefill 插入仍阻塞同批 Decode |
-| **分块预填充** | [Sarathi-Serve](https://arxiv.org/abs/2403.02310) | 按 `max_num_batched_tokens` 切分长 Prompt，与在途 Decode 拼成 Stall-free 混合批 | 压低 TPOT P99，Decode 搭权重读取便车；代价是每块需重读前缀 KV |
-| **零开销重叠调度** | [vLLM V1](https://vllm.ai/blog/2025-01-27-v1-alpha-release) · [SGLang](https://arxiv.org/html/2312.07104v2) | CPU 提前 1 步组装 Batch $k+1$ 元数据并异步提交，延迟一拍回收 Batch $k$ 采样结果 | 消除小模型/高并发下的 CPU-bound 气泡；代价是 EOS 最多多算 1 步且中止状态机更复杂 |
+#### Q2：`nsys stats` 看什么？`NVTX` 怎么用？（对应简历“擅长使用 Nsight Systems 分析执行路径和性能”）
 
-### 2.3 KV Cache 内存抽象、MLA 与 CUDA Graph
+> “`nsys stats` 是 Nsight Systems 的命令行统计汇总工具，它看的是底层运行时和硬件执行指标，不是业务层的 TTFT 或 TPOT。我主要看三张报告表：
+>
+> 第一是 `cuda_gpu_kern_sum`（GPU Kernel 汇总），能直接看到按总耗时排序的热点 Kernel、每个 Kernel 的调用次数、平均耗时、最小和最大耗时，用来锁定最花时间的算子。第二是 `cuda_api_sum`（CUDA API 汇总），主要看 CPU 端 `cudaLaunchKernel`、`cudaStreamSynchronize`、`cudaMemcpyAsync` 这些调用占了多少时间，用来判断是不是 CPU 发射太碎或者一直在做同步等待。第三是 `cuda_gpu_mem_time_sum`（显存操作汇总），看 H2D、D2H、D2D 拷贝和 `memset` 的总耗时与数据量，判断有没有异常的跨端数据搬运。
+>
+> 至于 `NVTX`（NVIDIA Tools Extension），它的作用是在代码里手动打上层语义区间标签。因为推理框架跑起来之后，底层时间线上全是密密麻麻的 GEMM、elementwise、reduce Kernel，单看 Kernel 名字很难知道它属于哪一步业务逻辑。在 Python 里用 `torch.cuda.nvtx.range_push` 和 `range_pop`（或者在 C++ 里用 `nvtxRangePushA` / `nvtxRangePop`），把 Prefill、Decode step、Attention、MLP、Sampling 这些阶段包起来之后，时间线就会多出一行带颜色的语义区间，可以直观对齐每一段上层代码和它对应的底层 GPU Kernel，定位瓶颈会准确很多。”
 
-- **[PagedAttention](https://arxiv.org/abs/2309.06180)（vLLM）**：逻辑块 → Block Table → 非连续物理 HBM 块（通常 `block_size = 16/32`）。**消除外部碎片**，仅留末尾块平均 `block_size / 2` 的内部碎片；支持 Beam Search / Parallel Sampling 的 Copy-on-Write，以及基于前向链式块哈希的自动前缀缓存（APC）。
-- **[RadixAttention](https://arxiv.org/html/2312.07104v2)（SGLang）**：Token 级 Radix Tree 组织 KV 槽位，请求结束后保留前缀，多轮对话 / Agent 零拷贝命中；显存紧张时按 LRU 递归驱逐 `lock_ref == 0` 的叶节点；配合 Rust [sglang-router](https://pypi.org/project/sglang-router/0.1.9/) 做 Cache-Aware 负载均衡。
-- **MLA（Multi-Head Latent Attention）**：将 $K, V$ 下投影压缩为低秩潜变量 $c_t^{\text{KV}}$ 缓存；Decode 阶段利用矩阵结合律做**矩阵吸收（Matrix Absorption）** $q_t^\top (W^{UK} c_j^{\text{KV}}) = (q_t^\top W^{UK}) c_j^{\text{KV}}$，不解压完整 KV 即可完成 Attention，显存降一个数量级且拉高算术强度。
-- **[CUDA Graphs](https://docs.vllm.ai/en/stable/design/cuda_graphs/)（Full vs. Piecewise）**：消除小 Batch Decode 的 CPU `cudaLaunchKernel` 开销。vLLM V1 将编译与捕获解耦：**纯 Decode 走 Full Graph**；**混合批走 Piecewise Graph**（Linear/Norm/MLP 在图内，动态形状的 Attention 留在图外）。捕获点过多会挤占 KV 显存池并拖慢冷启动，过少则增加 Padding 浪费。
+#### Q3：时间线上看到 GPU 端 Kernel 交替执行很紧凑，但 CPU 端有很长的 `Sync` 和 `Memcpy`，瓶颈在哪里？
 
-### 2.4 多维并行策略（JD 第 3 条必考：DP / TP / PP / SP / EP）
+> “这个现象说明瓶颈在 **GPU 端（GPU-bound）**，而不是 CPU 慢或者 H2D 拷贝慢。
+>
+> 判断逻辑是这样的：GPU 端 Kernel 排得非常紧凑、中间几乎没有空隙（bubble），说明 GPU 计算或显存带宽已经处于满负荷工作状态，CPU 发射任务的速度完全跟得上。CPU 端之所以出现很长的 `cudaStreamSynchronize` 或者同步 `Memcpy`（通常是 Decode 结束时做 D2H，把采样出的 token id 或 logits 拷回 CPU），是因为 CUDA 发射是异步的——CPU 早就把这一步的所有 Kernel 全部丢进队列了，等走到需要拿结果回主机的地方，GPU 还没把前面排队的 Kernel 全算完，CPU 只能阻塞在 `Sync` 或同步 `Memcpy` 里干等。
+>
+> 对应的优化思路不应该去优化 CPU 拷贝或发射，而应该回到 GPU 时间线里，看紧挨着排满的那些 Kernel 哪几个占比最大，针对热点算子去降耗时；如果是同步拷贝导致了不必要的流水线停顿，也可以检查能不能把异步流和下一轮调度重叠起来，但大前提还是先把 GPU 热点的计算或访存时间压下来。”
 
-| 并行维度 | 切分对象 | 核心通信原语 | 适用场景与工程权衡 |
-| :--- | :--- | :--- | :--- |
-| **DP（数据并行）** | 完整模型副本，按请求分流 | 无（仅网关路由） | 扩展总吞吐首选，零通信开销；无法降低单请求显存与 TTFT |
-| **TP（张量并行）** | 按头/列/行切分权重矩阵 | 每层 2 次 **AllReduce**（Attention + MLP） | 降低单请求 TTFT 与单卡显存；对互联带宽极敏感（通常限单机 NVLink 内 $\le 8$ 卡） |
-| **PP（流水并行）** | 按 Transformer 层数切分 | 阶段间 **P2P Send/Recv** | 通信量最小，适合跨机大模型；存在流水气泡（Micro-batch / Chunked Prefill 缓解）且不降单请求延迟 |
-| **SP / CP（序列/上下文并行）** | 沿 Sequence 维切分长 Prompt | **Ring Attention / AllGather** | 专治超长上下文（128K–1M）Prefill 激活显存与单卡算力瓶颈 |
-| **EP（专家并行，MoE）** | 不同 Expert 放不同卡 | **All-to-All**（Token Dispatch & Combine） | MoE 大模型（如 DeepSeek-V3）必备；瓶颈在于路由负载不均（热专家拥塞）与跨机 All-to-All 延迟，常配合 **Dual-Batch Compute-Comm Overlap** 隐藏通信 |
+#### Q4：多次测试算子或性能 Benchmark 时，为什么有时看最小值（`Min`），有时看中位数（`Median`）或 `P95/P99`？
 
-### 2.5 算子加速、低比特量化与投机采样（JD 第 2 条 & 加分项 2/3）
+> “这取决于测试对象和噪声特性，要分三个场景看：
+>
+> 第一，测**单个确定性 GPU Kernel 的纯执行耗时**（比如用 CUDA Event 测同一个固定 shape 的 Triton 算子跑 100 次），核心指标看 **Minimum（最小值）**。因为硬件执行确定性指令的物理耗时有一个下界，任何外部干扰——比如后台进程抢占、时钟频率轻微波动、缓存未命中——只会让实测时间变长，不可能让它比硬件极限更短。所以最小值最接近算子本身的真实性能下界。
+>
+> 第二，测**端到端推理框架的 A/B 对照实验**（比如我在 GraphBudget 里测 256 个固定请求的完整 Decode 吞吐），整个链路包含 Python 调度、进程通信、显存分配和多次 Kernel 执行，随机抖动不可避免，单次极值不具备代表性。此时采用多组交错运行（A-B-A-B）并取配对相对提升的 **Median（中位数）**，能有效过滤环境漂移和偶发尖刺。
+>
+> 第三，评估**线上生产推理服务的用户体感**，均值和中位数会掩盖长尾卡顿，必须看 **P95 和 P99 尾延迟**，确保绝大多数请求的 TTFT 和 TPOT 都满足 SLA。”
 
-1. **FlashAttention & Flash-Decoding**：
-   - **FlashAttention（Prefill 核心）**：Q/K/V 分块驻留 SRAM + **Online Softmax** 动态维护 $(m_i, l_i)$，避免 $[S, S]$ 矩阵落盘，HBM 访存从 $O(S^2)$ 降至 $O(S d_h)$：
-     $$
-     m_{\text{new}} = \max(m_{\text{old}}, \tilde{m}), \qquad l_{\text{new}} = e^{m_{\text{old}} - m_{\text{new}}} l_{\text{old}} + e^{\tilde{m} - m_{\text{new}}} \tilde{l}
-     $$
-   - **Flash-Decoding（长上下文 Decode 核心）**：Decode 时 $S_q = 1$、Batch 小，常规 FlashAttention 网格并行度仅 $B \times n_q$，大量 SM 空转；Flash-Decoding 沿 **KV 序列长度 $S_{\text{kv}}$ 维度做 Split-KV 并行**，最后再做一次轻量的 LogSumExp 归约，把长序列 Decode 的 SM 占用率和 HBM 带宽拉满。
-2. **低比特量化权衡**：
-   - **W4A16（AWQ / GPTQ + Marlin）**：权重压缩至 1/4，**小 Batch Decode（Memory-bound）提速极猛**；但大 Batch 进入 Compute-bound 后，反量化指令本身引入额外 ALU 开销，性能反而可能不如 FP16/FP8。
-   - **W8A8（FP8 Block-wise / SmoothQuant INT8）**：显存减半 **且** 吃双倍 Tensor Core 算力，Prefill 与大 Batch Decode 双赢；FP8 动态范围远优于 INT8，工程落地更简洁。
-   - **KV Cache FP8/INT8 量化**：直接将 $B_{\max}$ 翻倍并压低长上下文 Attention 带宽。
-3. **投机采样（Speculative Decoding / MTP）**：
-   - 物理本质：用极小 Draft Model（或主模型自带的 Multi-Token Prediction 头）串行猜出 $\gamma$ 个候选 Token，主模型**一次前向并行验证 $\gamma + 1$ 个 Token**。因为 Decode 是带宽受限的，验证 $\gamma+1$ 个 Token 几乎只花 1 次权重读取时间，把算术强度直接放大为平均接受长度 $\alpha$ 倍，且通过拒绝采样严格保证输出分布与原模型数学无损一致。
+#### Q5：一面获取的团队业务信息
 
-### 2.6 P/D 分离与 RDMA 生命周期（JD 第 3 条 & 加分项 5）
-
-```mermaid
-sequenceDiagram
-    participant R as PD Router
-    participant P as Prefill Pool (高算力)
-    participant D as Decode Pool (高带宽)
-    R->>D: 1. Pre-reserve 目标 KV 槽位
-    R->>P: 2. 下发 Prompt
-    loop 分块计算与传输重叠
-        P->>D: 3. Push KV Chunk (RDMA / NIXL)
-    end
-    Note over P,D: 已下发网卡的 In-Flight RDMA 写不可取消
-    D-->>D: 4. Deferred Release：本地释放 ∧ 远端在途写全完成 → 才可复用
-```
-
-- **[DistServe](https://arxiv.org/abs/2401.09670)**：消除混跑干扰，允许 Prefill（低 TP 高算力）与 Decode（大 Batch 高带宽）独立配比与扩缩容。
-- **生产级安全不变量**（[LMSYS 2026-10-26 报告](https://www.lmsys.org/blog/2026-10-26-cf-security/)）：① 准入强校验 `max_context_length <= prefill_kv_pool_capacity`；② Push 型 RDMA 在请求 Abort 时无法撤回在途写，Decode 侧必须采用 **Deferred Release（延迟释放）** 防静默覆写；③ Router 必须 **Paired Abort（成对中止）** 避免对端空等超时。
+1. **技术路线**：推理引擎团队不自研新框架，主力工作是将主流开源引擎 **`SGLang` 和 `vLLM`** 适配到自研 GPU（包括算子开发、Kernel 优化和框架特性打通）。
+2. **硬件背景**：早期芯片缺少**虚拟地址管理（VMM）**支持，导致部分依赖动态显存映射的框架特性难以低开销适配，因此团队当前重点面向下一代芯片做完整适配（公开资料提及启望 S2/S3 及 FlagOS 生态进展，见[财联社](https://www.cls.cn/detail/2248341)、[钛媒体](https://www.tmtpost.com/7630475.html)、[FlagOS 2.0 Issue #5](https://github.com/flagos-ai/FlagRelease/issues/5)）。
 
 ---
 
-## 三、曦望（Sunrise）业务与国产 GPGPU 适配专题
+## 二、二面准备
 
-结合一面面试官亲口透露的团队定位与公开资料（[财联社](https://www.cls.cn/detail/2248341)、[钛媒体](https://www.tmtpost.com/7630475.html)、[FlagOS 2.0](https://github.com/flagos-ai/FlagRelease/issues/5)）：
+### 2.1 自我介绍（口述稿，约 75 秒）
 
-1. **团队真实定位**：曦望是专注大模型推理 GPGPU 的芯片公司（启望 S2 兼容 CUDA 生态对标 A100 约 80% 性能，启望 S3 目标推理成本降 90%）。大模型推理引擎组**不从零造自研框架**，核心任务是**紧跟 `SGLang` 与 `vLLM` 社区演进，完成自研芯片的算子适配与硬件特性支持**。
-2. **一面透底的真实硬件痛点——「早期芯片不支持虚拟地址（Virtual Addressing / VMM）」为什么卡死软件特性？**
-   - 现代推理引擎的高级内存特性（如 CUDA Virtual Memory Management API、动态按需增长的连续 KV 视图、零拷贝显存池扩缩容与碎片整理）依赖 GPU MMU 将离散物理页映射到连续虚拟地址空间。
-   - 若硬件不支持虚拟地址映射，软件侧只能退回「启动时静态大块预分配」或「显式拷贝重组」，前者造成严重显存浪费、后者引入额外带宽开销，因此必须在下一代芯片（S2/S3）做软硬协同规划。
-3. **国产卡适配 `SGLang` / `vLLM` 的五步工程方法论**：
-   - **Day-0 跑通与精度标尺**：先靠 FlagGems / Generic Math 路径跑通，用 CPU FP32 Golden Reference 逐层比对 Cosine Similarity 与 Logprobs；
-   - **Attention 后端插件化移植**：通过 `vllm-plugin-FL` 等插件机制接入硬件特化 Attention，同时保留 Generic Math Fallback；
-   - **Triton / FlagTree 硬件感知调优**：根据自研卡真实的 SRAM 大小、Warp/Wavefront 宽度和寄存器数做 Autotune，避免直接照搬 NVIDIA 的 `BLOCK_M/N/K` 导致 Register Spilling；
-   - **静态图（CUDA Graph）分层打通**：先通纯 Decode Full Graph，混合批用 Piecewise Graph 绕开动态 Attention；
-   - **通信与计算 Overlap**：在多卡 TP/EP 下通过双 Stream / 异步 Collective 隐藏 AllReduce 与 All-to-All 通信延迟。
-
----
-
-## 四、个人简历 6 大王牌项目与 PR 深挖防御（精确对齐简历原文）
-
-> **统一答题边界纪律**：严格区分「**我实现并验证过**」「**我读过源码原理**」「**我基于物理模型推测**」，绝不把上游框架的能力说成自己写的。
-
-### 4.1 `GraphBudget`｜SGLang 确定性 Decode 优化（简历头号项目）
-
-- **简历事实锚点**：围绕 `Qwen2.5-0.5B-Instruct BF16`、单 GPU、`TP=1`、最多 16 个运行请求，通过 trace 定位 BF16 小 M GEMM 开销；参照上游 SGLang PR #42145 适配 Triton 分块（`M16 / N64 / K128`，每个 CTA 负责一个输出块），保留 FP32 fused-bias 计算顺序与原生回退路径。对 256 个固定请求（每请求 128 输出 token）做 5 组交错 A/B，有效输出吞吐配对提升中位数 **72.4%**，所测输出 token 完全一致。
-- **二面狠追问与高分答法**：
-  - *Q：为什么强调「确定性（Deterministic）Decode」？普通推理不是更快吗？*
-    - **答**：在金融/评测/强化学习 Rollout 对齐（如 GRPO 训推一致）场景中，需要消除浮点和并行归约顺序差异带来的输出漂移；原生确定性路径因为关闭了部分非确定性大库启发式选择，小 M GEMM 退化严重，我通过固定 CTA 归约顺序 + 保留 FP32 fused-bias 顺序，在**零输出漂移**前提下把吞吐拉回来了 72.4%。
-  - *Q：为什么选 `M16 / N64 / K128` 而不是更大的 Tile？*
-    - **答**：运行并发上限为 16，Decode 阶段 $M \le 16$；如果用 `M64` 或 `M128`，超过 75% 的计算都在算无效 Padding，且网格 CTA 数量太少引发严重的 **Wave Quantization（尾波效应）**；缩小 $B_M$ 到 16、配合 `N64 / K128` 既减少了无效填充又拉高了 SM 并行波次利用率。
-  - *Q：如果让你改进评测体系（顺手把一面「最小值」的坑圆回来）？*
-    - **答**：一面面试官提醒得非常对——端到端吞吐我用交错 A/B + AA 校验配合中位数抗环境噪声，但如果下钻到单个 GEMM Kernel 的硬件极限归因，应该直接报 **Min（最小值）** 看物理下界，同时端到端补齐 **P95/P99 TPOT** 看用户尾延迟。
-
-### 4.2 `FlagOS` 第二季 Track 1｜SGLang 算子优化（直击国产芯片加分项！）
-
-- **简历事实锚点**：
-  - **Task 161｜AWQ 4-bit 反量化**：第 **2** 名，平台平均加速比 **29.46×**，**昆仑芯加速比 47.23×**；通过位运算解码打包权重与零点，在满足对齐条件时成对读取 scale 并打包写回两个 FP16 结果。
-  - **Task 156｜分段 LoRA K 投影**：第 **3** 名，平台平均加速比 **10.74×**；按 segment/head 分块归约 K 维，对部分短 decode 形状分组处理多个 head。
-- **二面狠追问与高分答法**：
-  - *Q：AWQ 反量化为什么在昆仑芯上能做到 47.23×？核心优化动作是什么？*
-    - **答**：原始朴素实现存在大量标量位拆解、非合并小粒度读写和反复 Global Memory 往返。我用纯位运算在寄存器内完成 4-bit weight/zero-point 解包，在满足地址对齐条件时**成对向量化读取 scale 并打包一次写回两个 FP16**，既减少了指令数又大幅提升了访存合并度（Coalescing）——在国产芯片（昆仑芯）这种对非对齐标量访存惩罚更高的架构上，收益被进一步放大到 47.23×。
-  - *Q：分段 LoRA K 投影为什么要对短 decode 形状分组处理多个 head？*
-    - **答**：短 Decode 场景下单个 segment/head 的计算量太小，单独起一个 Program/CTA 会导致 Launch 与调度占比过高、SM 填不满；把多个 head 分组打包进同一个 CTA 并行归约，提高了单 CTA 有效工作量与访存吞吐。
-
-### 4.3 `FlagGems` 算子贡献（PR #7733 / #7734 & 最新 #9124）
-
-- **简历与最新进展锚点**：
-  - **PR #7733 / #7734**：修复整数等值比较经 FP32 转换产生的精度损失（超过 $2^{24}$ 的整数转 FP32 会丢低位导致误判相等！），补充混合整数/0D 张量/标量回归测试；为 `slice_backward` 按需将非连续梯度转为连续布局满足线性读取要求。
-  - **最新 PR #9124（面试重磅加分！）**：直接修复了 **Sunrise（曦望）/ SGLang 运行 Qwen3-4B 时的通用 SDPA math attention GQA 失败问题**（Issue #6172），并获维护者批准；在 Review 中进一步梳理了大张量 `int64` program_id 溢出防护（>2B 元素）、4D shape 校验和 `device == "cpu"` 异构卡单测条件。
-- **追问防御**：遇到整数比较为什么会走 FP32？因为早期通用 Triton 模板为了复用浮点比较逻辑直接 `.to(tl.float32)`，对于 `int32/int64` 大于 $16{,}777{,}216$（$2^{24}$）的相邻整数会发生舍入碰撞，必须保留原生整数比较指令。
-
-### 4.4 `SGLang` PR #46596｜多 Detokenizer IPC 延迟观测
-
-- **简历事实锚点**：针对多 Detokenizer Worker，为 Scheduler 到 `MultiDetokenizerRouter` 的消息交付增加 IPC 延迟直方图（`sglang:detokenizer_router_delivery_seconds`），覆盖序列化、IPC 等待和解码，兼容原有单帧协议。
-- **追问防御**：多进程推理引擎里，纯 GPU Profiler 往往看不到 ZMQ 排队与反序列化毛刺；通过 33-byte Linux boot/time-namespace 单调时钟多段 ZMQ framing（并对极端 TSC 负差值做 clamping 保护），既不破坏旧单帧协议兼容，又能把端到端尾延迟精准拆成控制面 IPC 与计算面 GPU。
-
-### 4.5 `llama.cpp` PR #29576｜Top-K 采样主机缓冲减半与异步同步
-
-- **简历事实锚点**：按 Top-K 候选宽度调整 probability/candidate 主机缓冲及 stride，处理布局变更时未完成的异步拷贝；在 `Qwen3.5-0.8B-Q4_0`（$V = 248{,}320, K = 8, 64$ 行输出）下，页锁定（Pinned）主机输出缓冲由 **242.5 MiB 降至 121.3 MiB（减少约 50%）**。
-- **追问防御**：① 为什么要压降 Pinned Memory？锁页内存不能被 OS 换出到 Swap，大模型大词表下过量占用会挤压 Host 物理内存并拖慢分配；② 为什么布局变更前必须处理未完成异步拷贝？`cudaMemcpyAsync` 返回时 D2H 拷贝仍在队列飞行，若直接 realloc/改写缓冲区会触发内存越界或读到脏数据，必须先同步对应 Stream。
-
-### 4.6 后训练 Teacher 打分显存优化（VeRL FSDP2 Teacher Worker）
-
-- **核心亮点**：大词表下 Teacher 前向一次性输出 `[B, S, V]` 完整 Logits 会直接 OOM；通过契约保持的 **Row-chunked Readout（按行分块计算 LM Head 与打分）**，将峰值显存从 $O(B \cdot S \cdot V)$ 压缩为 $O(\text{chunk} \cdot V)$，且已接入 VeRL FSDP2 Teacher Worker。
+> “面试官您好，我是喻嘉城，目前是哈尔滨工程大学电子信息工程专业大三本科生，求职方向是 LLM 推理引擎和 GPU 算子研发实习。
+>
+> 技术栈方面，我日常使用 Python、C++ 和 Triton 进行推理系统和算子开发，了解 CUDA 底层执行模型与 GEMM 分块原理，熟悉 `SGLang`、`llama.cpp` 的核心执行路径，也习惯用 `Nsight Systems` 做端到端 trace 定位和对照评测。
+>
+> 过去几个月我主要围绕三块内容做了落地实践：
+> 第一是开源社区贡献，给 `SGLang`、`FlagGems` 和 `llama.cpp` 提交了多条 PR，覆盖多 Detokenizer 进程的 IPC 延迟可观测性、Triton 算子边界正确性修复，以及采样阶段页锁定主机缓冲的内存优化；
+> 第二是推理优化项目，基于 `SGLang` 做了 GraphBudget，通过 trace 定位到确定性 Decode 路径下的 BF16 小 M GEMM 瓶颈，适配了 Triton 分块并保持逐 token 确定性，实测有效输出吞吐中位数提升了 72.4%；另外也做了一个 RL 在线蒸馏的稀疏教师评分项目，通过按需稀疏 LM Head 投影减少无关计算和传输；
+> 第三是异构算子竞赛，在 FlagOS 第二季 SGLang 算子优化赛题里负责分段 LoRA 的 K 投影优化，拿到第 3 名，平台平均加速比 10.74 倍。
+>
+> 一面时了解到团队重点在做 `SGLang` 和 `vLLM` 到自研芯片的适配与性能优化，和我目前的积累非常匹配。到岗时间上，我明年 1 月可以入职，大三下学期课程较少，可以稳定保证每周出勤 4 天、连续实习 6 个月。以上是我的基本情况。”
 
 ---
 
-## 五、二面高频业务题、软性技能与精准反问
+### 2.2 项目与 PR 详细口述（严格对应简历）
 
-### 5.1 高频通用业务与系统设计题
+#### 1. GraphBudget｜SGLang 确定性 Decode 优化
 
-1. **线上推理服务「平均延迟正常，P99 尾延迟飙升」怎么分层排查？**
-   - **四步定位**：① **批构成干扰**：长 Prefill 阻塞 Decode → 开 Chunked Prefill 调 `max_num_batched_tokens` 或上 P/D 分离；② **KV 抢占（Preemption）**：显存打满触发重算/Swap → 看 KV 使用率与抢占指标，开 KV FP8 / 前缀缓存；③ **控制面与 IPC 气泡**：用 `nsys` + ZMQ 打点查 Python GC、Tokenizer 阻塞与 `cudaStreamSynchronize`；④ **多卡木桶效应**：查单卡降频或 NCCL/RDMA 拥塞。
-2. **现在大家都用 AI Agent 写 Kernel，面试官问「你怎么保证 Agent 辅助写的算子在生产环境可靠？」**
-   - **直接亮出你的工程方法论（简历里的 `ai-infra-specialist-skills`）**：Agent 负责加速初稿生成和配置搜索，但**工程可靠性绝对不能交给 Agent 盲猜**，必须靠三道硬闸门闭环：① **算子契约（Contract）**：明确形状、步长/非连续布局、边界与 `int64` 溢出条件；② **独立参考实现（Golden Reference）**：用 CPU/FP32 独立实现做全覆盖数值与边界单测（含 0D、非对齐、混合精度）；③ **受控基准测试（Controlled Benchmark）**：交错 A/B + AA 校验 + `Min` / `Median` / `P99` 分层归因，拒绝幻觉数字。
-3. **MoE 模型（JD 第 1 条明确提到）推理的核心瓶颈是什么？怎么优化？**
-   - **瓶颈**：① 静态权重显存极大（所有 Expert 都要常驻）但单 Token 激活参数少，Decode 算术强度更低；② EP（专家并行）下跨卡 **All-to-All** 通信占比高且存在热专家负载不均；③ 分组矩阵乘（Grouped GEMM）各 Expert 分配到的 Token 数动态不等。
-   - **优化**：大 Batch + EP/DP 混合并行、Grouped GEMM 融合内核、Dual-Batch 通信计算 Overlap（DeepEP 思路）、W4A16/FP8 权重量化。
+- **完整口述介绍**：
+  > “这个项目的背景是，在科研评测或线上回放场景下，`SGLang` 开启确定性推理模式后，Decode 阶段的吞吐下降非常明显。我首先抓了端到端的执行 trace，发现主要耗时集中在 BF16 的小 M GEMM 算子上——在 Decode 阶段并发请求数不大，矩阵的 M 维度很小，但原生确定性路径默认使用的分块配置偏大，导致大量计算行被无效填充，同时活跃的 CTA 数量偏少，GPU 算力和带宽都没有跑满。
+  >
+  > 定位之后，我参考了上游 `SGLang` PR #42145 的设计，针对小 M 场景适配了 Triton 的分块方案，采用 `M16 / N64 / K128` 的块尺寸，并且让每个 CTA 独立负责一个输出块，避免跨 CTA 的不确定归约。同时在实现里严格保留了原有的 FP32 fused-bias 计算顺序，对于超出适配范围的 shape 或数据类型直接走原生回退路径，确保不破坏确定性语义。
+  >
+  > 评测上，我在单 GPU 上用 `Qwen2.5-0.5B-Instruct`（BF16，TP=1），限制最多 16 个并发运行请求，跑 256 条固定请求、每条生成 128 个输出 token，做了 5 组交错 A/B 实验。相比同配置下的原生确定性路径，有效输出吞吐的配对提升中位数达到了 72.4%，并且所有测试请求生成的 token 序列完全逐字一致。”
 
-### 5.2 二面精准反问面试官（避开一面问过的，直接体现洞察力）
+- **追问 1：为什么确定性推理很难做到高性能？你为什么能既提速又不丢确定性？**
+  > “GPU 常规高性能 GEMM（比如 cuBLAS 或 Split-K）为了榨干并行度，经常把同一个输出块的 `K` 维拆给多个线程块并行算，最后通过原子加或分阶段归约合并。但浮点加法不满足结合律，线程块完成的先后顺序每次运行都可能不一样，最后一位尾数出现微小偏差，经过几十层 Transformer 放大和采样，生成的 token 就会分叉。
+  >
+  > 我保住确定性的核心有两点：第一是**单 CTA 完整归约**，每个输出块由同一个 CTA 沿 K 维按固定顺序累加完，不存在跨 CTA 的非确定性合并；第二是**严格对齐精度与累加顺序**，保留 FP32 累加和原有的 fused-bias 顺序，不引入额外的近似或重排。提速则来源于把原来偏大的 Tile 换成了贴合小 M 的 `M16 / N64 / K128`，大幅减少了无效填充并增加了可并行调度的 CTA 数量。”
 
-1. **顺着一面硬件痛点追问**：「一面老师提到咱们团队主力是把 SGLang 和 vLLM 适配到自研卡，而且上一代芯片因缺少虚拟地址在部分框架特性上受限。想请教在下一代芯片（S2/S3）的适配规划里，目前团队在 **PagedAttention / CUDA Graph / MoE EP 通信** 这几块里，最希望实习生切入攻坚的是哪一块？」
-2. **顺着 FlagOS 生态追问**：「我之前在 FlagGems 给 Sunrise/SGLang 修过 Qwen3-4B 的 GQA 问题，想了解一下团队平时在 **FlagGems / FlagTree 开源通用算子** 和 **针对自研卡手写特化后端** 之间，大概是如何划分维护边界的？」
-3. **展现成长意愿**：「如果我有幸加入团队，在 1 月中旬入职前这一个多月，您建议我优先补强哪方面的工程底座（比如 C++/CUDA 底层运行时、vLLM V1 源码，还是特定算子/通信栈）？」
+- **追问 2：为什么选用 `M16 / N64 / K128` 这个分块？如果并发变大（比如 M=128）怎么办？**
+  > “在最多 16 并发的 Decode 场景下，M 维度上限就是 16。如果 `BM` 设为 64 或 128，至少有四分之三的计算都是浪费的，还白白占用了共享内存和寄存器。把 `BM` 压到 16 刚好贴合真实有效行数；把 `BN` 设为 64 可以沿输出列维度切出足够多的 CTA，把 GPU 上所有 SM 都填满；`BK` 保持 128 则是为了保证每次内层循环有足够的 Tensor Core 吞吐和数据复用。
+  >
+  > 如果并发变大、M 增长到超出小 M 适用范围，或者遇到 Prefill 阶段，我的策略是不强行套用小 M 配置，而是通过调度分发条件直接回退到原生路径或更大 `BM` 的配置，避免在大 M 场景下因为 CTA 过多、单块复用不足导致负优化。”
+
+- **追问 3：为什么要做“5 组交错 A/B”，而不是分别跑 5 次取平均？**
+  > “单卡长时间运行很容易受到温控降频、显存页状态变化或系统后台任务的影响。如果先连续跑 5 次 Baseline，再连续跑 5 次优化版本，两组数据所处的机器温度和频率基线可能不一样，测出来的差距里会混进环境漂移。采用 A-B-A-B 交错执行，把相邻的一对 A 和 B 配对算相对提升比例，最后取 5 组配对提升的中位数，可以最大程度抵消时间漂移和偶发抖动。”
+
+#### 2. FlagOS 第二季 Track 1｜SGLang 算子优化 · Task 156（分段 LoRA K 投影）
+
+- **完整口述介绍**：
+  > “这道赛题是优化 `SGLang` 多 LoRA 推理中的分段 LoRA K 投影算子。在实际多租户推理服务里，一个 batch 里面会同时混着挂载不同 LoRA adapter 的请求，不同 segment 的长度不一致，而且在短 Decode 场景下每个请求只有 1 个 token，同时上游传入的张量在内存里还可能是非连续 stride。
+  >
+  > 如果按传统方式拆成多次小算子调用，CPU 发射开销很大，GPU 利用率也很低。我用 Triton 实现了一个融合的分段 Kernel：在网格划分上按 segment 和 head 维度分块，在块内完成 K 维归约；针对短 Decode 场景每个 segment 计算量过小的问题，把多个 head 分组打包到同一个计算块里一起处理，减少 Kernel 调度开销并提高访存合并度；同时在指针计算里显式接收各维度 stride，直接兼容非连续输入，避免了额外调用 `.contiguous()` 带来的显存拷贝。最后这道题在评测平台上拿了第 3 名，平均加速比达到 10.74 倍。”
+
+- **追问 1：多 adapter 分段算子最容易踩的坑是什么？**
+  > “主要有三个坑：第一是**负载不均衡**，不同 segment 长度差异大，如果直接按 segment 分配线程块，长 segment 会拖慢整体尾延迟，所以要按固定块大小对 segment 内部再切片；第二是**短 Decode 下的小颗粒度问题**，单 token 单 head 的计算量太小，把多 head 分组打包才能提高单块有效计算量；第三是**边界与非连续 stride**，不同 segment 对应的 adapter 权重指针需要通过索引表间接寻址，必须用准确的 stride 和 mask 防止越界读脏数据。”
+
+- **追问 2：在 Triton 里适配非连续 stride 和直接转 `.contiguous()` 怎么权衡？**
+  > “对于小规模或已经被多次复用的算子，转一次 `.contiguous()` 会多一次完整的 HBM 读写开销，在 Memory-bound 的 Decode 阶段非常划不来。所以在 Triton 里把输入张量的各维 stride 显式传进去，通过 `idx * stride` 计算偏移，只要最内层访问维度能尽量保持合并访存（coalesced），就能省掉整次拷贝开销。当然，如果某些特殊切片导致最内层 stride 非常离散、造成严重非合并访存，或者算子本身需要线性内存假设（比如我在 FlagGems 修的 `slice_backward`），就需要按需转成连续布局。”
+
+#### 3. rl-posttrain-sparse-scoring｜RL 在线蒸馏逐位置稀疏教师评分
+
+- **完整口述介绍**：
+  > “这个项目针对的是 RL 在线蒸馏（On-policy Distillation）里的系统瓶颈。在训练端计算候选集条件 reverse KL 时，每个 token 位置其实只需要教师模型对少量候选 token（比如学生采样的 Top-K 候选）的打分。但常规接入推理引擎的做法，是让教师模型把完整词表（动辄十几万到二十几万维）的 logits 全算出来，再跨进程或跨节点传给训练端，无论 LM Head 的计算量还是通信带宽开销都非常大。
+  >
+  > 我参考了 vLLM、verl 和 IndexedLogits 的设计思路，在 `SGLang` 里设计了一套逐位置候选评分接口和稀疏 LM Head 投影方案：训练端把每个位置需要打分的候选 token id 列表传给教师推理端，教师模型跑完最后一层 Transformer 得到 hidden states 后，不再乘整个词表矩阵，而是只按需索引出对应候选 token 的 LM Head 权重行，做稀疏点积直接算出这些候选 token 的 logits 并返回。这样把最后一层投影的计算量和回传的数据量，都从全词表规模压缩到了候选集规模。”
+
+- **追问 1：这套方案在工程实现上最关键的难点在哪里？**
+  > “难点主要在两头：一是**接口与调度对齐**，不同请求、不同 token 位置对应的候选 token 集合各不相同，要把变长或批量的候选 id 高效打包传进 `SGLang` 的前向批次里，并和 `ModelRunner` 里展平后的 token 位置一一对应，不能错位；二是**稀疏投影的访存效率**，如果直接用最朴素的逐位置 gather 权重再算点积，可能会产生大量离散显存读取，所以要尽量把相同 batch 或相邻位置的索引组织好，确保只算必要行且不引入过高的索引开销。”
+
+#### 4. SGLang PR #46596｜多 Detokenizer Worker 的 IPC 延迟直方图
+
+- **完整口述介绍**：
+  > “`SGLang` 在高并发服务里支持启动多个 Detokenizer Worker 来分担文本解码压力，Scheduler 会通过 ZMQ IPC 把生成的 token 批次发给 `MultiDetokenizerRouter` 再分发出去。之前这段链路缺少细粒度的延迟埋点，线上如果出现端到端尾延迟抖动，很难判断是 GPU 算慢了，还是多进程 IPC 堵住了。
+  >
+  > 我为 Scheduler 到 `MultiDetokenizerRouter` 的消息交付增加了 IPC 延迟直方图指标，把总耗时拆成了三个可观测环节：发送端序列化耗时、IPC 队列传输等待耗时、接收端反序列化解码耗时。同时在协议层做了向后兼容，完整保留原有的单帧消息格式，避免破坏已有调用路径。”
+
+- **追问：为什么拆分这三段耗时有工程价值？**
+  > “因为这三段对应三种完全不同的根因和修法：如果**序列化/解码耗时高**，说明 Python 对象结构太重或 pickle 负载过大，应该精简传输字段或换更轻量的二进制打包；如果**IPC 等待耗时高**，说明 Detokenizer Worker 数量不够或者下游消费阻塞，需要扩容 Worker 或排查下游回包；如果三段都很低，就能快速排除进程通信嫌疑，把排查重点放回 GPU Scheduler。”
+
+#### 5. FlagGems PR #7733 & #7734｜GPU 算子正确性修复
+
+- **完整口述介绍**：
+  > “这两个 PR 都是修复 Triton 通用算子库 `FlagGems` 的边界正确性问题。
+  >
+  > PR #7733 修复的是整数等值比较（`eq`）的精度丢失：原实现里在比较前把整数类型隐式转成了 FP32，而 FP32 只有 24 位有效尾数，当 int64 或较大的 int32 数值超过精确表示范围时，两个本来不相等的整数转成 FP32 后会变成同一个数，导致比较结果错误。我将其修改为保持整数域直接比较，并补充了混合整数类型、零维张量（0-D tensor）以及标量语义的回归测试用例。
+  >
+  > PR #7734 修复的是 `slice_backward` 在输入梯度为非连续张量时的错误：底层 Kernel 依赖连续内存的线性读取假设，如果反向传播传进来的是经过转置或切片的非连续梯度张量，直接按线性偏移读写会产生错误结果。我改成在进入核心路径前按需判断并转为连续布局，保证了语义正确且不影响原本已经连续的常见路径。”
+
+#### 6. llama.cpp PR #29576｜采样主机缓冲区优化
+
+- **完整口述介绍**：
+  > “在 `llama.cpp` 的后端采样流程里，GPU 端算出的候选概率和索引需要拷回 CPU 的页锁定（Pinned）主机缓冲里做后续处理。原实现的主机缓冲区按较大的固定宽度分配，存在明显内存冗余。
+  >
+  > 我改成根据实际的 Top-K 候选宽度动态调整 probability 和 candidate 两个主机缓冲区的尺寸与 stride，从而把主机侧页锁定内存按需缩减。改动过程中一个关键细节是处理缓冲区布局变更时**尚未完成的异步拷贝**——因为 D2H 拷贝在后台流上异步执行，如果上一次传输还没结束就修改缓冲区步长或重分配内存，会导致数据竞态甚至崩溃，所以我补齐了布局变更前的同步保护。在 `Qwen3.5-0.8B-Q4_0`、词表 248,320、Top-K=8、64 行输出的测试配置下，页锁定主机输出缓冲从 242.5 MiB 降到了 121.3 MiB，减少了约 50%。”
+
+#### 7. openEuler 开源社区实习
+
+- **完整口述介绍**：
+  > “这段实习在 openEuler 开源社区参与 openGauss Dolphin 兼容层与 Node.js `mysql2` 驱动的兼容性适配，主要定位并修复了空 BLOB 类型转换异常，以及 `DATETIME` / `TIMESTAMP` 在二进制协议结果集里的解析错误，按社区流程提交了对应的 Issue 和 PR。虽然领域偏数据库驱动协议，但这段经历训练了我在大型 C/C++ 代码库里抓包定位协议问题、写最小复现和配合社区 Code Review 的工程习惯。”
+
+---
+
+### 2.3 简历相关八股（口述详细版）
+
+#### A. CUDA、GPU 架构与 Triton
+
+**1. GPU 的存储层级有哪些？各自的特点是什么？**
+> “从离计算单元最近、速度最快到最远、最慢依次是：
+> 第一层是 **Register（寄存器）**，每个线程私有，延迟最低（约 1 个时钟周期），带宽最高，但容量很小，如果单个线程用的局部变量太多导致寄存器不够，就会溢出（Spilling）到本地内存（本质在 HBM 里），性能会急剧下降；
+> 第二层是 **Shared Memory 和 L1 Cache**，位于每个 SM 片上，同一个 Block 内的线程共享 Shared Memory，由程序员显式管理，速度非常快，常用来做 GEMM 分块的数据缓存和线程块内协作；
+> 第三层是 **L2 Cache**，全芯片所有 SM 共享，硬件自动管理，用来缓解对 HBM 的访问压力；
+> 最外层是 **Global Memory（HBM）**，容量最大（比如几十 GB），但带宽相对算力有限、访问延迟高达几百个时钟周期。GPU 优化的核心主线就是尽量把数据留在寄存器和 Shared Memory 里反复用，减少来回读 HBM。”
+
+**2. 什么是 Shared Memory 的 Bank Conflict？怎么避免？**
+> “为了提供极高的片上带宽，Shared Memory 在物理上被划分成 32 个独立的存储体（Bank），连续的 4 字节（32-bit 字）依次轮流存放在 0 到 31 号 Bank 里。当同一个 Warp 里的 32 个线程同时访问 Shared Memory 时，如果它们落在不同的 Bank，硬件可以在一个事务里并行响应；如果多个线程同时访问同一个 Bank 里的**不同地址**，硬件无法同时输出，只能把这些访问串行化，这就是 Bank Conflict，最坏情况会导致 32 倍延迟（注意：如果多个线程读同一个 Bank 的**完全相同地址**，硬件会触发广播机制，不算冲突）。
+>
+> 常见避免方法是在二维数组的行尾加 **Padding**（比如把一行 32 个 float 声明成 33 个 float），把原本按列访问时对齐到同一个 Bank 的元素错开；或者通过 Swizzle（异或重排索引）打散 Bank 映射。”
+
+**3. 什么是内存合并访问（Memory Coalescing）？**
+> “GPU 访问全局显存（HBM）不是按单个字节读的，而是按固定大小的内存事务（通常是 32 字节或 128 字节缓存行）整块搬运。如果同一个 Warp 里相邻的 32 个线程，访问的是全局显存中**连续对齐**的地址，硬件就能把这 32 次请求合并成 1 到 2 次内存事务，带宽利用率接近 100%；如果线程访问的地址是跨步很大的或者随机离散的，硬件就得发起很多次内存事务，每次只用到其中一小部分有效字节，显存带宽就被严重浪费了。”
+
+**4. Compute-bound 和 Memory-bound 怎么理解？在 LLM 推理里分别对应什么？**
+> “区分标准是看算子的**算术强度**（总浮点计算量除以总显存访存量）和硬件的**算力带宽比**谁大。如果算术强度高，数据搬进来能算很久，瓶颈卡在计算单元（如 Tensor Core）上，就是 **Compute-bound**，典型例子是大 batch 的 GEMM 和大模型推理的 Prefill 阶段；如果算术强度低，搬了大量数据只做很少几次计算，计算单元一直在等显存，就是 **Memory-bound**，典型例子是 Decode 阶段的 GEMV（M 很小）、Softmax、RMSNorm、RoPE 以及逐元素激活算子。
+>
+> 优化方向也完全不同：Compute-bound 要盯分块、Tensor Core 指令利用率和流水线；Memory-bound 则要盯**算子融合（Kernel Fusion）**（减少中间结果写回 HBM 再读出）、**权重量化**（如 W4A16 减少搬运字节数）和内存合并访问。”
+
+**5. Occupancy（占用率）是不是越高越好？**
+> “不是。Occupancy 是指每个 SM 上实际活跃的 Warp 数与该 SM 硬件支持的最大 Warp 数之比。GPU 隐藏显存访问延迟靠的是硬件级零开销 Warp 切换——一个 Warp 等数据时，SM 立刻切去执行另一个就绪的 Warp。所以 Occupancy 太低时，可能藏不住访存延迟。
+>
+> 但它并不是越高越好：受限于每个 SM 总的寄存器数和 Shared Memory 总量，如果为了强行拉高 Occupancy 而限制单线程寄存器用量或缩小分块，可能会导致寄存器溢出（Register Spilling）或者 Shared Memory 复用率下降，反而让 HBM 访存变多、性能变差。很多高性能 GEMM 在 50% 左右的中等 Occupancy 下就已经能跑满带宽和算力了。”
+
+**6. Triton 和 CUDA 的核心区别是什么？各自适用什么场景？**
+> “最核心的区别是编程粒度。CUDA 是 **Thread-level（线程级）** 编程，开发者需要手动计算每个线程的 ID，显式管理数据从 Global Memory 到 Shared Memory 的搬运、线程同步（`__syncthreads`）、内存合并访问和 Bank Conflict，控制力最强但开发和调试成本高。
+>
+> Triton 是 **Block-level（块级）** 编程，每个 Program 实例对应一个线程块（CTA），开发者只需要用类似 NumPy 的块操作描述怎么切分张量、加载块、做计算和写回，底层的线程映射、内存合并、Shared Memory 分配和部分流水线调度由 Triton 编译器自动生成。所以 Triton 特别适合快速开发和迭代融合算子（如 Fused Softmax、RMSNorm、分段 LoRA、定制 Attention 或小 M GEMM）；而像标准大矩阵 GEMM 或极致异步双缓冲（如 Hopper TMA / WGMMA 指令）需要榨干最后几个百分点硬件极限时，手写 CUDA / CUTLASS 仍然有优势。”
+
+#### B. LLM 推理引擎核心（SGLang / vLLM / KV Cache / CUDA Graph）
+
+**7. Prefill 和 Decode 两个阶段有什么区别？核心指标是什么？**
+> “**Prefill 阶段**是把用户输入的整段 Prompt 一次性并行送进模型，算出所有位置的 KV Cache 并生成第 1 个输出 token。因为输入序列长，矩阵乘的 M 维度大，计算密度高，属于 **Compute-bound**，决定了用户的首字延迟 **TTFT（Time To First Token）**。
+>
+> **Decode 阶段**是自回归逐个生成 token，每一步每个请求只输入 1 个新 token，但都要把整层模型权重和前面所有历史 token 的 KV Cache 从 HBM 读一遍。搬运量极大、计算量极小，属于典型的 **Memory-bound**，决定了每个输出 token 的生成间隔 **TPOT（Time Per Output Token）** 以及系统整体输出吞吐（tokens/s）。”
+
+**8. KV Cache 解决了什么问题？PagedAttention 和 RadixAttention 的核心机制是什么？**
+> “在自回归生成中，因为有因果掩码（Causal Mask），之前已经算过的历史 token 的 Key 和 Value 向量在后续步骤中不会再改变。把它们缓存在显存里，每步只需要算当前新 token 的 Q、K、V，再和缓存的历史 K、V 做 Attention，就能把单步计算复杂度从平方级降到线性级，这就是 KV Cache，本质是用显存空间换算力。
+>
+> 但 KV Cache 会随着序列长度动态增长，传统静态预分配按最大长度给每个请求占一整块连续显存，内部碎片和外部碎片非常严重，限制了最大并发 batch size。**vLLM 的 PagedAttention** 借鉴操作系统的虚拟内存分页机制，把 KV Cache 切分成固定大小的物理块（Block），每个请求只维护一张逻辑块到物理块的映射表（Block Table），物理块可以在显存里非连续存放、按需动态申请和释放，几乎消除了显存碎片。
+>
+> **SGLang 的 RadixAttention** 在分页的基础上，进一步把所有请求用过的 KV Cache 组织成一棵基数树（Radix Tree）。在多轮对话、长 System Prompt、Few-shot 或 Agent 多分支调用场景下，只要新请求和树里已有节点有相同的前缀，就能直接复用现成的 KV Cache，跳过重复的 Prefill 计算；显存紧张时，再按 LRU 策略从叶子节点逐出最久未使用的前缀块。”
+
+**9. Continuous Batching（连续批处理）和 Chunked Prefill（分块预填充）分别解决什么问题？**
+> “**Continuous Batching** 解决的是静态批处理的空等浪费。传统 Static Batching 必须等一个 batch 里最长的请求生成完毕，短请求占用的槽位和显存才能释放，GPU 大量空转；Continuous Batching 把调度粒度细化到每一个前向迭代步（iteration-level），只要有请求吐出结束符就立刻释放资源，并把等待队列里的新请求插进来一起算，显著提升吞吐。
+>
+> **Chunked Prefill** 解决的是长 Prompt 插队导致的 Decode 卡顿。如果一个几万 token 的 Prefill 一次性跑完，会独占 GPU 几百毫秒，正在进行 Decode 的所有并发请求都会出现明显的延迟毛刺。Chunked Prefill 把长 Prompt 按固定 token 预算（比如每次 512 或 2048 token）切分成小块，和当前正在跑的 Decode 请求打包进同一个混合 batch 里执行，既用 Prefill 填补了 Decode 阶段的算力空闲，又把单步最大延迟控制在稳定范围内。”
+
+**10. CUDA Graph 的原理是什么？为什么 Decode 阶段收益大？有哪些限制？**
+> “正常执行 PyTorch / 推理框架代码时，CPU 需要按顺序逐个调用 CUDA API 把几百个小 Kernel 下发到 GPU（Launch Overhead）。在 Prefill 阶段每个 Kernel 算得久，CPU 下发耗时完全被藏在 GPU 执行时间后面；但在小模型或小 batch 的 Decode 阶段，单个 Kernel 只跑几微秒，甚至比 Python/C++ 侧准备参数和发射 Kernel 的时间还短，结果时间线上 GPU 出现大量空隙，系统变成了 CPU-bound。
+>
+> **CUDA Graph** 允许在运行前把一整轮 Decode 里的所有 Kernel 发射和依赖关系录制成一张静态执行图，真正推理时 CPU 只需要调用一次 `cudaGraphLaunch`，整张图就会由驱动和 GPU 硬件连续调度执行，几乎消除了 CPU 发射开销。
+>
+> 它的核心限制是**静态性**：图里的张量显存地址、输入 shape 和控制流必须固定，不能在图内做依赖 CPU 判断的动态分支或动态显存分配。因此推理引擎通常会在启动时预先按一组离散的 batch size（比如 1、2、4、8、16、32 等）分桶捕获多张图，运行期把实际 batch 向上 padding 到最近的桶；如果模型里包含无法捕获的动态操作（比如某些自定义算子或通信分支），就会用 **Piecewise CUDA Graph（分段图）** 把能捕获的片段拆开捕获，中间动态部分切回普通模式执行。”
+
+**11. SGLang 和 vLLM 的整体架构特点是什么？**
+> “两者底层核心思想高度趋同，都基于 Continuous Batching、分块 KV 管理和 CUDA Graph 加速。
+>
+> `SGLang` 的架构特点是把系统清晰拆分为三个独立进程：**Tokenizer Manager**（处理 HTTP 请求与文本分词）、**Scheduler**（常驻 GPU 执行连续批处理调度、RadixAttention 前缀树管理和模型前向）以及 **Detokenizer Manager**（把生成的 token id 转回文本流式返回），进程之间用 ZMQ IPC 异步通信，尽量避免 Python 侧的网络 I/O 和编解码阻塞 GPU 调度主循环；同时它把 RadixAttention 前缀复用和基于压缩有限状态机的结构化输出深度整合在一起。
+>
+> `vLLM` 生态覆盖最广，模型支持和社区插件非常丰富，其最新的 V1 架构同样采用了引擎核心与前端进程解耦、零开销前缀缓存、统一调度器和分段 CUDA Graph，两者在工程架构上正在不断收敛。”
+
+#### C. JD 延伸高频概念（口述直觉版）
+
+**12. FlashAttention 和 Flash-Decoding 分别解决了什么问题？**
+> “标准 Attention 需要先算 `Q × K^T` 得到一个 `N × N` 的注意力分数矩阵写回 HBM，再从 HBM 读出来做 Softmax 写回，最后再读出来乘 `V`。序列一长，这个 `N × N` 的中间矩阵不仅显存占用爆炸，反复读写 HBM 的带宽开销更是成为主要瓶颈。**FlashAttention** 的核心做法是把 Q、K、V 分块搬进片上 SRAM，利用 Online Softmax 技巧边遍历 K、V 块边动态维护局部最大值和归一化分母，全程不把完整的 `N × N` 矩阵落盘到 HBM，最终只把结果 `O` 写回一次，既大幅降低了显存占用，又把访存量压下来，实现了显著加速。
+>
+> **Flash-Decoding** 针对的是长上下文的 Decode 阶段：Decode 时每个请求的 Q 只有 1 个 token，如果只按 batch 和 head 维度做并行，并发数少的时候 GPU 上几十上百个 SM 根本吃不满。Flash-Decoding 沿着历史 KV Cache 的序列长度维度做切分，让多个线程块并行计算不同 KV 分段的局部 Attention 和局部 Softmax 统计量，最后再起一个轻量级归约 Kernel 合并结果，从而把长文本 Decode 的并行度和显存带宽利用率拉起来。”
+
+**13. TP、PP、DP、EP 四种并行策略的区别与适用场景是什么？**
+> “**DP（数据并行）**：每张卡放一份完整模型副本，各自独立处理不同用户请求，卡间几乎没有计算通信开销，最适合单卡放得下模型、追求高总吞吐的场景。
+>
+> **TP（张量并行）**：把单层内部的权重矩阵（比如 Attention 的头和 MLP 的列/行）切分到多张卡上协同计算同一批请求，每层前向都需要做两次 All-Reduce 同步通信。它强依赖机内高带宽互联（如 NVLink），主要用来放单卡装不下的大模型，并且显著降低单请求延迟。
+>
+> **PP（流水线并行）**：按 Transformer 层数切分到不同卡或不同节点，卡间只需点对点传递层间激活值，通信量比 TP 小很多，适合跨节点扩展，但会引入流水线气泡（Bubble），对单请求延迟帮助不如 TP。
+>
+> **EP（专家并行）**：专门用于 MoE（混合专家）架构，把不同的 Expert 权重分散到不同卡上，前向时通过 All-to-All 通信把每个 token 路由到它选中的 Expert 所在卡上算完再传回，能在不复制全量专家权重的情况下支撑超大参数 MoE 推理。”
+
+**14. 低比特量化（W4A16 / FP8）和投机采样（Speculative Decoding）的核心收益来源是什么？**
+> “**W4A16 量化**把权重压缩成 4-bit 存储在显存里，计算时在片上反量化成 FP16 和激活做乘加。因为 Decode 阶段本质上是 Memory-bound、时间全花在从 HBM 搬权重上，把权重体积压到原来的四分之一，就能大幅缩短搬运时间、提升 Decode 吞吐并省出更多显存给 KV Cache。**FP8** 则是权重和激活都用 8-bit 浮点，在支持原生 FP8 Tensor Core 的硬件上，既减半了显存带宽需求，又翻倍了矩阵乘算力，Prefill 和 Decode 都有收益。
+>
+> **投机采样**利用了 Decode 阶段算力严重过剩的特点：算 1 个 token 和并行验证 4 到 8 个 token 的耗时几乎一样（因为都要把模型权重读一遍）。于是先用一个极小的草稿模型或模型自带的投机头（如 EAGLE / MTP）快速连续猜出后面几个 token，再交给目标大模型做一次前向并行验证；通过拒绝采样机制接收正确的连续前缀，就能在**严格保证输出分布与原模型完全一致**的前提下，把一次前向的产出从 1 个 token 提升到平均 2 到 4 个 token。”
+
+**15. P/D 分离（Prefill-Decode Disaggregation）为什么有必要？**
+> “Prefill 和 Decode 的资源诉求完全相反：Prefill 是计算密集型，适合较小的 TP 和较小的并发；Decode 是访存密集型，需要尽量攒大 batch 摊薄权重读取开销。如果混在同一批卡上跑，长 Prompt 的 Prefill 会严重阻塞正在进行的 Decode，导致 TPOT 尾延迟飙升；反过来为了控制延迟而限制 Prefill，又会拉长 TTFT。
+>
+> P/D 分离把集群拆分为专门的 Prefill 实例和 Decode 实例：Prefill 实例算完首字后，把生成好的 KV Cache 通过 RDMA（IB/RoCE）高速网络直接传给 Decode 实例继续生成。这样两边可以各自独立配置最合适的并行策略和扩缩容比例，互不干扰。它的核心工程挑战在于 KV Cache 传输带宽、传输与计算的重叠，以及传输完成前的显存生命周期管理。”
+
+**16. 如果自研芯片早期缺少虚拟地址管理（VMM），适配 vLLM / SGLang 会遇到什么难点？**
+> “现代推理框架里一些高级显存特性——比如动态显存池的按需扩容、细粒度显存碎片整理，或者像 vLLM 的 Sleep Mode（把权重和 KV 物理显存卸载释放，唤醒时原地重新映射回原虚拟地址以保持 CUDA Graph 指针不变）——都高度依赖底层驱动的虚拟内存管理接口（如 CUDA 的 `cuMemCreate`、`cuMemMap`）。
+>
+> 如果早期硬件或驱动不支持 VMM，就无法把物理显存和虚拟地址解耦。框架只能退回到启动时一次性静态预分配一整块大显存（再在框架层自己管理固定大小的 KV Block 池），像原地重映射或动态伸缩显存池这类特性要么不可用，要么只能通过代价很高的全量数据拷贝来绕过，且会破坏 CUDA Graph 捕获的地址稳定性。所以在做适配时，需要先把驱动支持的能力边界盘清楚，优先打通静态预分配路径和核心算子性能，等下一代硬件具备完整 VMM 能力后再接入高级显存特性。”
+
+#### D. C++ / Python 工程基础
+
+**17. Python 有 GIL，为什么推理引擎还能用 Python 写上层调度？什么时候会遇到瓶颈？**
+> “GPU 上的实际计算是在 C++/CUDA 扩展里异步执行的，进入底层扩展函数时会释放 GIL，所以 GIL 不会限制 GPU 的并行算力。真正容易出问题的是**小模型或高并发短 Decode 场景**：此时 GPU 算得极快，如果 Python 侧的请求队列管理、张量对象构造、Tokenizer 编解码和 HTTP 网络处理全挤在同一个进程里，GIL 竞争和单核 Python 解释器开销就会超过 GPU 执行时间，导致 GPU 出现大量空泡。工程上一般用三招解决：多进程拆分（如 SGLang 的 Tokenizer / Scheduler / Detokenizer 分离）、用 CUDA Graph 减少 Python 侧逐算子发射，以及把热点调度逻辑下沉到 C++ 或 Rust。”
+
+**18. Pinned Memory（页锁定内存）的原理是什么？使用时要注意什么？**
+> “操作系统默认分配的主机内存是可分页的，可能随时被换出到磁盘或改变物理页映射。GPU 的 DMA 引擎要通过 PCIe 直接搬运数据时，不能直接访问可分页内存，驱动必须先在主机侧把数据拷贝到一块临时的锁页缓冲区，再由 DMA 传给 GPU，多了一次 CPU 拷贝开销且无法真正异步。
+>
+> Pinned Memory 把物理内存页锁定在 RAM 中不被换出，DMA 可以直接零拷贝传输，并且支持和 GPU 计算并行执行的异步拷贝（`cudaMemcpyAsync`）。需要注意的副作用是，页锁定内存无法被操作系统回收或换出，过度分配会挤压宿主机可用物理内存，导致系统变慢甚至 OOM，所以必须按实际需求精控大小（例如我在 `llama.cpp` PR #29576 里按 Top-K 宽度缩减采样输出缓冲）。”
+
+---
+
+### 2.4 二面反问
+
+结合一面已经确认过团队技术路线（适配 `SGLang`/`vLLM` 及下一代芯片演进），二面可按对话节奏从中选 2 个提问：
+
+1. **问下一代芯片适配的当前优先级**：
+   > “一面时了解到团队主力在把 `SGLang` 和 `vLLM` 适配到新芯片上。请问团队目前最核心的攻坚重点，是偏**底层高频算子（比如 Attention、MoE、量化 GEMM）的性能追齐**，还是偏**框架层特性（比如 CUDA Graph、多卡通信、P/D 调度）的完整打通**？”
+2. **问自研卡上的性能分析工具链与验收标准**：
+   > “我平时排查性能比较依赖 `Nsight Systems` 的 trace 和 A/B 对照。咱们在自研 GPU 上做推理引擎优化时，目前对应的 Profiler 工具链成熟度如何？日常定位算子或框架瓶颈一般怎么和基准卡做对标？”
+3. **问入职前 1–2 个月的期望与准备建议**：
+   > “如果我有机会加入实习，您对实习生在前 1 到 2 个月最看重哪方面的产出？距离明年 1 月到岗还有一段时间，您建议我提前重点看哪一块源码或底层知识？”
+
+---
+
+### 2.5 其他常见问题（业务排查、软性技能与价值观）
+
+二面邀请说明重点考察**通用业务问题、过往项目经历、价值观和软性技能**，以下 6 题准备清晰口径：
+
+#### 1. 简历写了“擅长 Agent 辅助算子开发”，代码是自己写的还是 AI 写的？怎么保证质量和底层理解？
+> “核心瓶颈分析、优化方向设计和最终验收标准都是我自己主导的，Agent 是用来加速代码生成、参数搜索和编写回归单测的工程提效工具。
+>
+> 为了避免大模型生成代码出现隐蔽错误或性能造假，我定了一套三步校验流程：第一是**算子契约**，动手前先明确输入输出 shape、dtype、stride 语义和极端边界条件；第二是**独立参考实现**，每个算子都必须和 PyTorch 原生实现做全量精度对齐，专门覆盖 0 维张量、非连续布局和边界大整数；第三是**对照实验与 trace 核验**，所有加速结论必须跑交错 A/B 并拉 trace 确认确实跑进了目标 Kernel、瓶颈确实消掉了，而不是误触发了回退路径或测了无效分支。这套方法让我能把精力集中在问题拆解和底层原理验证上，同时保持很高的迭代效率。”
+
+#### 2. 通用业务排查题：在自研卡上跑 `SGLang`，如果发现输出乱码/精度不对，或者吞吐比预期低一半，你会怎么一步步排查？
+> “我会按**精度问题**和**性能问题**两条线来拆：
+>
+> 如果是**精度/乱码问题**：第一步先消除随机性，固定输入 Prompt、关掉并发（batch=1）、用 greedy decode，确认问题可稳定复现；第二步做二分定位，把自研卡和参考卡（比如 NVIDIA 卡）逐层的 hidden states 导出来比对 cosine 相似度或最大绝对误差，快速锁定是从哪一层、哪一个具体算子开始偏离的；第三步剥离出这个单算子做最小复现，重点查四类高发原因——非连续 stride 处理错误、低精度或类型转换截断（类似我在 FlagGems 修的整数转 FP32 丢精度）、归约累加顺序差异，以及异步拷贝/同步缺失导致的脏读。
+>
+> 如果是**吞吐比预期低一半**：不凭感觉猜，先抓一段稳定运行期间的端到端 Profiler trace。先看整体 GPU 活跃度：如果时间线上 GPU 有大量空隙，说明是 **CPU-bound 或调度阻塞**，重点查有没有正常命中 CUDA Graph、Python Scheduler 或 IPC 队列有没有卡顿、是不是存在多余的 host-device 同步；如果 GPU 排得很满没有空隙但整体耗时高，说明是 **GPU-bound**，按 `kern_sum` 拉出 Top-3 热点算子，判断属于计算受限还是访存受限，再去查分块配置、算子融合、显存合并访问，或者多卡通信有没有和计算做好 Overlap。”
+
+#### 3. 简历求职意向写了 RL Infra 和 LLM Inference，如果实习主要做推理引擎适配能接受吗？
+> “完全可以，而且这两个方向在底层技术栈上是同一套能力。我之前做 RL 在线蒸馏的稀疏评分项目，本质上也是在改 `SGLang` 的推理接口和 LM Head 投影路径。现阶段我更希望扎扎实实把推理引擎和底层 GPU 算子适配做深，这些工程积累对后续无论做推理系统还是 Post-Training Infra 都是核心基本功。”
+
+#### 4. 为什么想加入曦望这样的国产芯片公司？
+> “主要有两个考虑。第一，在异构芯片上把 `SGLang`、`vLLM` 真正适配好并跑出有竞争力的性能，需要同时理解上层框架调度、中层算子编译和底层硬件约束，这种跨层实战的成长密度很高，也和我之前在 FlagOS 竞赛里做多平台算子优化的兴趣一致；第二，一面了解到团队选择直接拥抱 `SGLang` 和 `vLLM` 开源生态，这个路线非常务实，我目前在 `SGLang` 和 `FlagGems` 都有现成的源码阅读和 PR 经验，进来后能比较快上手产生实际贡献。”
+
+#### 5. 做项目或提开源 PR 时，遇到最卡壳的问题怎么解决？和社区 Maintainer 意见不一致怎么处理？
+> “遇到最卡壳的问题时，我的原则是**先做最小复现（Minimal Repro），把变量缩到最少**。比如在 `llama.cpp` 查异步拷贝布局变更问题，或者在 `GraphBudget` 核对确定性差异时，都会先把多并发和大模型剥离掉，缩成固定输入的小规模用例，结合日志和 trace 拿到确凿证据再改代码。
+>
+> 和 Maintainer 意见不一致时，我会先站在维护者的角度理解他们的优先级——上游主干通常把**代码简洁性、向后兼容性和零回归风险**看得比单一场景的局部提速更重。我会把自己测的 A/B 数据、边界测试用例和兼容回退方案整理清楚做客观沟通；如果对方出于架构统一性坚持另一种写法，我会尊重社区规范按建议修改，而不是强行推自己的方案。”
+
+#### 6. 关于大三课业与每周出勤时间的沟通
+> “我目前是大三，下学期专业课不多，已经提前梳理过课表和考试节点。简历上最初写的是每周 5 天，一面时面试官结合实际情况提醒我大三学期内保证 5 天压力会比较大。我回去重新核对了一下课表，**每周稳定出勤 4 天、连续实习 6 个月**是我可以完全兑现的安排；没有课的周或者项目关键节点可以灵活补到 5 天，但我想先把最稳妥、不打折扣的时间说在前面，方便团队排期。”
