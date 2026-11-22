@@ -1,4 +1,4 @@
-/* 高可读工程手册样式：深炭黑导航 + 纸感正文 + 去 AI 蓝表格 + 舒展字号 */
+/* 单页无跳转极简阅读样式：隐藏冗余左栏，正文居中舒展，右侧大纲实时跟随 */
 :root {
   --md-primary-fg-color: #18181b;
   --md-primary-fg-color--light: #27272a;
@@ -21,13 +21,20 @@
   --md-code-bg-color: #161b22;
 }
 
+/* 单页模式隐藏左侧空白导航栏，保留右侧实时大纲 */
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    display: none;
+  }
+}
+
 .md-grid {
-  max-width: 72rem;
+  max-width: 68rem;
 }
 
 .md-typeset {
   font-size: 0.85rem;
-  line-height: 1.78;
+  line-height: 1.8;
 }
 
 .md-typeset h1 {
@@ -35,22 +42,22 @@
   font-weight: 700;
   color: var(--md-default-fg-color);
   letter-spacing: -0.015em;
-  margin-bottom: 1.1rem;
+  margin-bottom: 1rem;
 }
 
 .md-typeset h2 {
-  font-size: 1.3rem;
+  font-size: 1.32rem;
   font-weight: 700;
   color: var(--md-default-fg-color);
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1.5px solid #e4e4e7;
   padding-bottom: 0.35rem;
-  margin-top: 2.2rem;
+  margin-top: 2.6rem;
 }
 
 .md-typeset h3 {
-  font-size: 1.05rem;
+  font-size: 1.06rem;
   font-weight: 700;
-  margin-top: 1.5rem;
+  margin-top: 1.6rem;
 }
 
 [data-md-color-scheme="slate"] .md-typeset h2 {
@@ -59,7 +66,7 @@
 
 .md-typeset table:not([class]) {
   font-size: 0.8rem;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e4e4e7;
   border-radius: 6px;
   box-shadow: none;
 }
