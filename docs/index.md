@@ -27,7 +27,6 @@
 | 31:57–32:46 | 为什么报告有效吞吐提升的中位数，而不是平均数？ | 你提到 5 组对照及环境波动；这属于**统计指标与实验方法**问题 |
 | 32:46–33:33 | 如果有少数特别慢的情况，中位数会不会显得不真实？ | 面试官切到了**尾部现象**；你当场还提到做过 A/A 测试，旧版复盘没有准确保留这一点 |
 | 33:33–36:23 | 实验轮次之间 GPU 是否空闲？若只看理想状态下一个 Kernel/Task 的最短耗时，该用什么？是为用户还是为优化者看？ | 这是同一条连续追问：从环境波动逐步限定到**Min（最佳观测耗时）**，最后明确和用户侧服务指标不同 |
-| 36:23–51:40 | 临时决定现场写代码，要求自己从 LeetGPU 前九题挑一道简单题（排除 Vector Addition），用 Triton 手写；提醒变量大小写、让你 Run/Submit | 虽然开始时说不打算考代码，后来仍考了独立编码。你已明确补充：**自己选题并做出来了**，不要再写成没做出来或结果未知 |
 | 51:40–56:40 | 询问到岗与出勤安排 | 录音中确有此环节；按你此前要求，**不单独列入技术或行为题背诵清单** |
 | 56:40–01:01:19 | 邀请你反问；你问团队是否使用开源/自研框架、当前是否有瓶颈、旧硬件能否用软件弥补 | 这是你主动问的问题。面试官说明主要适配 SGLang/vLLM，工作包括算子和框架特性；还举了早期芯片缺乏虚拟地址能力、硬件约束难用软件完全弥补的例子 |
 
@@ -97,19 +96,7 @@
 
 **一面还追问过两件事：** 一是测量轮次之间有没有让 GPU 空闲；二是你提到做过 A/A 对照。A/A 可以帮助观察“同样实现重复测是否波动”，但不等于排除了全部频率、缓存和后台干扰。面试官最后明确区分了**优化者关心的低干扰最快耗时**与**用户关心的服务延迟分布**，所以回答时先说明测量目标，再选择 Min、Median 或 P95/P99。
 
-### 8. 现场 Triton 编程：面试官让你做了什么？
-
-面试官让你打开 LeetGPU，在前 9 道基础题里**自己选一道**，但不能选 Vector Addition，要求用 Triton 现场写。
-
-你选择了其中一道**比较简单的题，并且做出来了**。录音里有面试官提醒变量大小写的过程；具体题名不在转写里，所以这里不擅自写成某一道题，也不额外宣称所有官方测试全部通过。
-
-**如果二面问起，可以这样说：**
-
-> “一面还让我在 LeetGPU 上现场选了一道简单的 Triton 题，我把它写出来了。过程中有两个变量大小写的地方，面试官提醒我改了一下。这个环节也让我意识到，平时做项目有人帮忙 Review 和自己在现场独立写代码，要求还是不一样的。”
-
-**二面继续准备：** Program ID、Block 内索引、Load/Store、Mask 和 Launch，至少能自己写基础逐元素 Kernel，再练 Reduction/Softmax。不要因为一面做出来了，就跳过基础题。
-
-### 9. 一面最后了解到的团队信息
+### 8. 一面最后了解到的团队信息
 
 这是你在**反问环节**主动问到的，不是面试官主动考你的题：团队主要将 SGLang、vLLM 适配到自研 GPU，包括算子开发和框架硬件特性支持；面试官举过老芯片缺乏虚拟地址支持的例子。
 
@@ -352,25 +339,23 @@
 
 **真实案例怎么选**：岗位意向用“结合一面介绍理解业务”；遇到困难用 Teacher Scoring 的方案调整；工程质量用 FlagGems GQA 的验证；性能分析用 GraphBudget 和一面 Benchmark 复盘。**STAR 是整理事实的方法，不需要把四个字母背出来。**
 
-## 三、投递简历逐句深挖｜一句话也可能追问十分钟
+## 三、技术追问｜与简历和推理引擎岗位有关的内容
 
-**这部分以实际投递的 `AI_Infra_Intern_Resume_ZH_20261029.pdf` 为准**，不是按面试经验凭空凑题。简历用“熟悉”“了解”“擅长”描述的能力，都可能被直接问到。每道题的**直接回答**是可以说出口的话；后面的**继续追问**是你必须理解、但不用一口气背出的细节。
+这一部分专门放技术追问，不再重复第二部分的自我介绍、项目口述和岗位意向。**原 2.3 中真正有用的知识点已经并入对应章节**，重复的 GPU 基础、Runtime 基础不另复制一份。
 
-**复习顺序**：先把 3.1 的 CUDA、GEMM、Triton 和 3.2 的 Profiling 讲对——一面已经实际考过；然后按 3.3–3.7 逐条检查简历上的工具、项目、PR、实习与竞赛。技术上没实际用过的内容，答“了解原理，但没有在项目里独立使用过”，比编造经验好。
+这里保留 GEMM、CUDA/Triton 的性能原理、Nsight、Inference Runtime、JD 高频问题，以及项目可能被追问的底层技术。**不准备通用 Python/C++/NumPy 基础问答，也不放现场手写代码题。**
 
-| 简历原句或条目 | 对应复习范围 | 一面是否已触及 |
+| 重点范围 | 看哪里 | 为什么 |
 | --- | --- | --- |
-| “熟悉 Python、C++，熟悉 Triton 算子开发；了解 CUDA 与 GEMM 分块” | 3.1、3.3 | **GEMM 分块、Triton 现场题** |
-| “了解 PyTorch、NumPy、SGLang、llama.cpp，以及 CUDA Graph、KV Cache” | 3.3、3.4 | 简历关联项目被追问 |
-| “Linux/WSL、Git、CMake；DL 与 RL 基础” | 3.5 | 尚未直接考 |
-| “擅长使用 Nsight Systems 分析执行路径和性能” | 3.2 | **连续多题，失分重点** |
-| “擅长 Agent 辅助算子开发，通过算子契约、独立参考和对照实验优化” | 3.6 | 讨论过 Agent 写代码；随后现场手写 |
-| SGLang、FlagGems、llama.cpp 三项开源贡献 | 3.6 | 有项目真实性追问的可能 |
-| GraphBudget、Teacher Scoring | 3.7 | **GraphBudget 的动机和测量方法** |
-| openEuler、FlagOS Task 156、MCM | 3.8 | LeetGPU 编程与算子基础相关 |
-| “关注前沿、发现痛点、论文与项目复现”及 RL Infra / Runtime 方向 | 3.9 | 可以从选题动机切入 |
+| GEMM、分块、CUDA 存储和确定性 | 3.1 | 一面实际问过，而且与你的 GraphBudget 相连 |
+| Nsight Systems/Compute、NVTX、Sync/Memcpy | 3.2 | 一面连续追问，最需要补齐的能力 |
+| SGLang/vLLM、KV Cache、CUDA Graph 与调度 | 3.3 | 简历与团队主要业务直接相关 |
+| FlashAttention、并行、量化、P/D 分离、VMM | 3.4 | 原 2.3 中保留的 JD 扩展，不与基础题重复 |
+| 投递简历中的其他开源 PR 技术细节 | 3.5 | 仅在面试官点名具体 PR 时展开；不放进第二部分主动介绍 |
+| GraphBudget / Teacher Scoring 的深入原理 | 3.6 | 这里补技术细节，第二部分负责自然口述 |
+| FlagOS 算子竞赛 | 3.7 | 按实际贡献与验证范围准备 |
 
-### 3.1 先补被一面实际拷打的 CUDA 与 GEMM
+### 3.1 CUDA、GEMM 与分块优化
 
 #### Q1. GEMM 里的 M、N、K 到底是什么？
 
@@ -468,7 +453,7 @@
 
 **继续追问**：FP32 累加、BF16 输出舍入、FMA/Fused Bias 的先后顺序、不同 Kernel 后端都可能改变最后若干 bit。具体保证到什么程度，要以真实等价性测试为准。
 
-### 3.2 “擅长 Nsight Systems”这句话，至少要准备这些
+### 3.2 Nsight 性能分析与真实时间线
 
 #### Q13. 你真正怎么用 Nsight Systems？不是只会打开时间线吧？
 
@@ -502,97 +487,9 @@
 
 **继续追问**：GPU 时间线排得密并不能证明饱和；采样结果、Profiler 的采集开销、CUDA Graph 执行路径也会影响解读。
 
-### 3.3 Python、C++、Triton、PyTorch 与 NumPy：简历写了就要会答
+### 3.3 Inference Runtime、KV Cache 与调度
 
-#### Q17. 简历写“熟悉 Python”，面试官最容易从哪问？
-
-**直接回答：**
-
-> “Python 我主要用来处理数据、写测试和调模型或算子。平时做性能实验，会用脚本固定输入、重复运行、整理统计结果；做回归测试时会关心异常是否真的被暴露，而不是一失败就直接跳过。”
-
-**继续追问**：可变与不可变对象、`list`/`dict`、生成器、上下文管理器、浅拷贝/深拷贝、`try/finally`，以及多进程与多线程的区别。面试官可能随手给一段代码问执行结果；**“熟悉 Python”不能只靠会调 AI 工具**。
-
-#### Q18. 简历写“熟悉 C++”，但自我介绍不主动提，面试官还是能问什么？
-
-**直接回答：**
-
-> “C++ 相关的经历主要在阅读和修改现有工程代码。我会从内存生命周期、对象所有权和数据布局去理解问题，例如主机缓冲区重分配前，得确认异步拷贝已经完成。我不会把自己包装成长期做高性能 C++ 底层开发的人。”
-
-**基础必须补齐**：`pointer` 和 `reference` 的区别；`const T&` 为什么能避免拷贝；`std::vector` 扩容为什么可能让旧指针失效；RAII 为什么用于管理资源；`unique_ptr` 与 `shared_ptr` 的所有权区别；栈上对象和动态分配对象的生命周期；编译与链接分别做什么。**不要把“写过 Python 调用的 C++ 扩展”直接说成掌握全部 C++ 并发知识。**
-
-#### Q19. PyTorch Tensor 与 NumPy ndarray 的主要区别是什么？
-
-**直接回答：**
-
-> “它们都能表示带 Shape、Dtype、Stride 的多维数组。NumPy 通常在 CPU 上做数值计算；PyTorch Tensor 可以放在 GPU 上，而且能配合 Autograd 自动求梯度。我做算子正确性测试时，会先用 PyTorch 原生实现算参考结果，再把自定义 Kernel 的输出和它比较。”
-
-**继续追问**：`shape`、`dtype`、`device`、`stride`、`storage_offset`，广播与类型提升。`torch.allclose` 是带容差比较；想测**完全一样**可以用 `torch.equal` / 精确容差，但要先确认目标是否真要求逐 bit 一致。`NumPy` 到 GPU Tensor 不一定零拷贝，需考虑设备传输。
-
-#### Q20. 为什么张量转置后常常不是 Contiguous？Stride 是什么？
-
-**直接回答：**
-
-> “Stride 决定一个维度的索引加一时，内存地址要跳多少个元素。转置通常只是改变 Shape 和 Stride，并没有把数据真的搬走，所以新的视图可能不是连续内存。如果 Kernel 还按线性连续布局去读，就可能读错。遇到这种情况，要么按真实 Stride 算地址，要么先转成连续布局。”
-
-**继续追问**：`expand` 可能产生 **zero stride**，很多逻辑元素实际共享同一个存储位置；`transpose` 改变轴顺序；`contiguous()` 对已经连续的 Tensor 通常不额外复制，对不连续的 Tensor 则可能分配新存储并拷贝。FlagGems `slice_backward` 就是这个问题的真实案例。
-
-#### Q21. PyTorch Autograd 是怎么工作的？为什么推理要关掉梯度？
-
-**直接回答：**
-
-> “训练时 PyTorch 会记录需要梯度的运算关系，反向传播再按链式法则求每个参数的梯度。纯推理没有反向更新的需求，通常会用 `no_grad` 或 `inference_mode` 避免构建不必要的梯度计算。这样能减少开销，但不等于所有 Tensor 一下都不用占显存了。”
-
-**继续追问**：`requires_grad`、计算图、`backward()`、梯度累积、`zero_grad`。`inference_mode` 比 `no_grad` 有更强的限制与优化，不能不看代码就随意替换在训练流程中会复用的 Tensor。
-
-#### Q22. Python 有 GIL，为什么还能做 GPU 推理调度？
-
-**直接回答：**
-
-> “模型的矩阵计算实际上交给 GPU 或底层算子执行，并不是 Python 一条指令一条指令地算，所以 GIL 不代表 GPU 只能跑一个任务。但如果每一步 GPU 工作很短，Python 的请求管理、数据准备、Kernel 发射也可能让 GPU 等它。可以通过多进程拆分、减少不必要的同步，或者 CUDA Graph 来降低这部分开销。”
-
-**继续追问**：GIL 主要约束同一 CPython 解释器中 Python 字节码的并行执行，具体版本与扩展行为有差异；CPU API 调用、线程等待、CUDA 异步执行是不同层次。
-
-#### Q23. 面试官让你手写 Triton，至少应该先写出什么？
-
-**直接回答：**
-
-> “我先确认输入形状和数据类型，决定一个 Program 负责多少元素，再用 Program ID 和块内索引找到自己的数据。Load、Store 都处理好越界 Mask，最后选择合理的 Block Size 启动。先验证结果，再做性能优化。”
-
-下面这个**教学例子**是最简一维逐元素加法（不是声称你一面选的那道题）。需要安装 PyTorch、Triton 且有支持的 GPU 才能实际运行：
-
-```python
-import torch
-import triton
-import triton.language as tl
-
-@triton.jit
-def add_kernel(A, B, C, N: tl.constexpr, BLOCK: tl.constexpr):
-    idx = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-    mask = idx < N
-    a = tl.load(A + idx, mask=mask, other=0)
-    b = tl.load(B + idx, mask=mask, other=0)
-    tl.store(C + idx, a + b, mask=mask)
-
-def add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    if a.shape != b.shape or a.dtype != b.dtype or a.device != b.device:
-        raise ValueError("shape, dtype and device must match")
-    if not a.is_cuda or not a.is_contiguous() or not b.is_contiguous():
-        raise ValueError("this simple kernel requires contiguous CUDA tensors")
-    out = torch.empty_like(a)
-    n = a.numel()
-    add_kernel[(triton.cdiv(n, 256),)](a, b, out, n, 256)
-    return out
-
-x = torch.arange(1031, device="cuda", dtype=torch.float32)
-y = x * 2
-torch.testing.assert_close(add(x, y), x + y)
-```
-
-**继续追问**：为什么 `n=1031` 不能直接用 4 个 Program 每个 256 元素处理？因为需要 `ceil(1031/256)=5` 个 Program，最后一个用 Mask 防止越界。再被问非连续 Tensor，就应明确这个简单版本**不支持**，需要额外传 Stride 或改成连续后再调用；不能装作所有布局都支持。
-
-### 3.4 推理框架、CUDA Graph、KV Cache：简历每个词都能问
-
-#### Q24. SGLang 接到一个请求后，大致经过哪些模块？
+#### Q17. SGLang 接到一个请求后，大致经过哪些模块？
 
 **直接回答：**
 
@@ -600,7 +497,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：Tokenizer Manager、Scheduler、Detokenizer Manager、Router 分别做什么；ZMQ 用在哪些进程间通道；多 Detokenizer Worker 为什么要考虑路由与 IPC 等待。不要说“SGLang 整个 Scheduler 都常驻 GPU”——调度控制逻辑在 CPU，模型计算在 GPU。
 
-#### Q25. SGLang 和 llama.cpp 有什么区别？你各接触了哪一部分？
+#### Q18. SGLang 和 llama.cpp 有什么区别？你各接触了哪一部分？
 
 **直接回答：**
 
@@ -608,7 +505,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：SGLang 的服务生命周期和 llama.cpp 的模型加载、GGUF、采样主机缓冲是不同层次。改过一个模块不等于对整个框架都很熟悉。
 
-#### Q26. Prefill 和 Decode 为什么瓶颈经常不一样？
+#### Q19. Prefill 和 Decode 为什么瓶颈经常不一样？
 
 **直接回答：**
 
@@ -616,7 +513,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：TTFT 是请求进入系统到首 Token 返回的时间，不等于纯 Prefill Kernel 时长；TPOT/ITL 和整体吞吐需要分别测，且长上下文下 Attention 的 KV 访问可能成为主要瓶颈。
 
-#### Q27. KV Cache 存的是什么？为什么 GQA 能省显存？
+#### Q20. KV Cache 存的是什么？为什么 GQA 能省显存？
 
 **直接回答：**
 
@@ -631,7 +528,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 例如 `L=32, n_kv=8, d_h=128, p=2`，每 Token 约 **128 KiB**，4096 Token 约 **512 MiB**（忽略分页、分配器和其他开销）。这是完整模型范围的逻辑 KV 量；多卡 TP 的实际单卡占用还取决于 KV Head 如何分片。
 
-#### Q28. PagedAttention、Prefix Cache 和 RadixAttention 是一回事吗？
+#### Q21. PagedAttention、Prefix Cache 和 RadixAttention 是一回事吗？
 
 **直接回答：**
 
@@ -639,7 +536,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：页大小太小会增加管理和索引开销；太大容易出现内部碎片。前缀缓存需要考虑 Token、位置、模型参数和缓存有效性，不能只比较两段文本表面是否相同。
 
-#### Q29. Continuous Batching 和普通 Batching 差在哪？
+#### Q22. Continuous Batching 和普通 Batching 差在哪？
 
 **直接回答：**
 
@@ -647,7 +544,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：为什么新加入的长 Prefill 可能影响已在 Decode 的请求？怎样通过 Chunked Prefill 分摊长 Prompt 的影响？为什么显存不足时不能无限加新请求？
 
-#### Q30. CUDA Graph 为什么能加速？什么时候不能用？
+#### Q23. CUDA Graph 为什么能加速？什么时候不能用？
 
 **直接回答：**
 
@@ -655,7 +552,7 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：捕获前为什么要 Warm-up？为什么要固定或管理输入地址？为什么一些模型采用离散 Batch Size 捕获点和 Padding？Full 与 Piecewise Graph 的选择要看 Attention Backend 及具体实现，不是简单地“纯 Decode 一定 Full”。
 
-#### Q31. CUDA Graph、Kernel Fusion、Tiling 分别优化什么？
+#### Q24. CUDA Graph、Kernel Fusion、Tiling 分别优化什么？
 
 **直接回答：**
 
@@ -663,59 +560,85 @@ torch.testing.assert_close(add(x, y), x + y)
 
 **继续追问**：如果 Kernel 已经长时间受显存带宽限制，CUDA Graph 未必改善多少；如果融合导致寄存器压力过大，也可能比拆开的 Kernel 更慢。
 
-### 3.5 Linux、WSL、Git、CMake、DL 与 RL：不要因为只占一行就跳过
+### 3.4 JD 重点延伸｜FlashAttention、并行、量化与系统设计
 
-#### Q32. Linux 和 WSL 有什么关系？你在里面做过什么？
+这里收录原 2.3 中尚未被 3.1–3.3 覆盖的内容，不再把相同定义抄两遍。
 
-**直接回答：**
-
-> “我主要在 WSL 的 Ubuntu 里做 Python、PyTorch、编译和测试。WSL2 运行的是 Linux 内核环境，所以很多 Linux 命令和开发工具能直接用，但 GPU 驱动、文件系统、网络以及和 Windows 的交互需要单独注意。遇到问题我会先确认是程序本身，还是环境和依赖造成的。”
-
-**继续追问**：`pwd`、`ls`、`grep`、`find`、`ps`、`top`、`nvidia-smi`、`ldd`、`which`、`env`、`export`、`chmod`；进程的退出码、标准输出/错误、信号和文件权限。WSL 的 `/mnt/c` 和 Linux 文件系统不是完全相同的 I/O 环境；别把 WSL 测试直接说成“所有原生 Linux 机器都通过”。
-
-#### Q33. Git 不就是 add、commit、push 吗？代码 Review 怎么做？
+#### Q25. Continuous Batching 已经能动态调度了，为什么还要 Chunked Prefill？
 
 **直接回答：**
 
-> “除了日常提交，我比较常用的是按问题开分支、做最小改动、给 PR 补测试，再根据 Reviewer 的意见更新。排查回归时会对比原版本和修改版本，明确哪个 Commit 引入了变化，而不是只看现在最新版能不能跑。”
+> “Continuous Batching 解决的是请求可以在每个解码步骤进入和退出批次。但一个很长的 Prefill 还是可能一次占用 GPU 很久，影响其他请求持续生成。Chunked Prefill 把长 Prompt 拆成多块，和 Decode 混合安排，减少一次长计算带来的停顿。”
 
-**继续追问**：`fetch`、`pull`、`merge`、`rebase` 的区别；`git diff`、`git log`、`git bisect` 的用途；解决冲突后要重新跑测试。PR Open、Reviewed、Approved、Merged 的状态不能混用。
+**继续追问**：块切太小可能增加调度和重复访问的开销；Chunk 大小要结合吞吐、TTFT、ITL 和显存预算实测，不能说越小越好。
 
-#### Q34. CMake 是干什么的？给一个现有 C++ 项目，你怎么构建？
-
-**直接回答：**
-
-> “CMake 不是编译器，而是用来描述和生成构建规则。一般先配置项目，明确编译器和依赖，再生成构建目录，执行构建，最后跑测试。如果构建失败，先看是 CMake 配置阶段找不到依赖，还是编译错误，还是链接错误。”
-
-常见命令（按项目实际要求调整）：
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j 8
-ctest --test-dir build --output-on-failure
-```
-
-**继续追问**：`target_link_libraries` 与 `target_include_directories` 的职责；链接时 `undefined reference` 是什么；Debug/Release 为什么结果可能不同。简历上写“熟悉 CMake”，不能只知道一个命令名字。
-
-#### Q35. 深度学习里的前向、反向、优化器是什么关系？
+#### Q26. SGLang 和 vLLM 的相同点与差别是什么？
 
 **直接回答：**
 
-> “前向先算模型输出和 Loss；反向根据链式法则求参数梯度；优化器再利用梯度更新参数。推理通常只有前向，没有按 Loss 更新参数的过程。做后训练时，Rollout 生成、Teacher 打分和 Student 更新虽然相互关联，但执行阶段和显存需求不同。”
+> “两个框架都要处理请求调度、KV Cache、连续批处理和 GPU 执行加速。它们的具体缓存结构、调度方式、执行后端与架构版本会有差异。对我们这种芯片适配场景，我觉得不能只比较名称，要看这个版本实际依赖哪些算子、Graph、通信和内存管理能力。”
 
-**继续追问**：`gradient`、`optimizer.step()`、`zero_grad()`、Batch、Epoch、Learning Rate、混合精度 BF16/FP32；为什么 BF16 做乘法但某些累加或归一化要保留 FP32。
+**继续追问**：说明你真正改过的 SGLang 模块，不要假装自己已经读过 vLLM 所有源码。不同版本的特性应查相应版本文档与代码。
 
-#### Q36. SFT、RL、On-policy、Reverse KL 是什么？
+#### Q27. FlashAttention 与 Flash-Decoding 主要解决什么？
 
 **直接回答：**
 
-> “SFT 是用示范答案直接训练模型预测正确 Token。RL 是根据奖励或优势信号，让模型更倾向于产生更好的结果。On-policy 的意思是训练数据主要由当前策略生成。Reverse KL 则是比较两个分布的一种方式，方向变了，优化倾向也会不一样。”
+> “FlashAttention 主要是让 Attention 的分数矩阵不必完整写到显存里。它按块读 Q、K、V，并用 Online Softmax 边算边维护归一化所需的统计量。Flash-Decoding 则更偏向长上下文生成：单个新 Token 的 Query 数量少，就把历史 KV 分段并行处理，最后把各段结果合并。”
 
-**继续追问**：`KL(p||q)=sum p(i) log(p(i)/q(i))`，需要明确**谁是第一个分布、谁是第二个分布**。Teacher/Student 的候选集条件 KL 和完整词表 KL 不同；不要在没定义分布和归一化方式时随口说“我优化了 KL”。
+**继续追问**：FlashAttention 降低的是中间张量存储与 HBM I/O，不是把 Attention 的数学计算复杂度自动变成线性；Flash-Decoding 的局部 Softmax 要正确合并最大值、分母和输出。
 
-### 3.6 三个开源 PR：每个原句都能向下追三层
+#### Q28. DP、TP、PP、EP 分别是什么？为什么不是卡越多就越快？
 
-#### Q37. SGLang PR #46596 为什么加这个直方图？测的到底是什么？
+**直接回答：**
+
+> “DP 是不同 GPU 各跑一份模型，处理不同请求；TP 是把一层的矩阵分到多卡同时算；PP 是把不同层放在不同卡，形成流水线；EP 是把 MoE 的专家分散到不同 GPU。它们解决的显存和计算问题不同，也要付不同的通信代价，不是卡数翻倍性能就一定翻倍。”
+
+**继续追问**：TP 的 All-Reduce、EP 的 All-to-All、PP 的流水气泡；没有模型、设备互联和负载条件，不能直接判断哪个并行方案最好。
+
+#### Q29. W4A16 和 FP8 为什么能加速？为什么有时反而变慢？
+
+**直接回答：**
+
+> “W4A16 主要是权重存得更小，Decode 搬权重时能省显存带宽，但运算时仍然有反量化成本。FP8 如果硬件有高效的低精度 Tensor Core，可以同时降低数据量并提高计算效率。不过这些都得看 Batch、Kernel 实现、Scale 处理和精度要求，不能直接按位宽计算实际加速比。”
+
+**继续追问**：INT4 的打包/解包与缩放开销、FP8 的 Scale/数值范围和校准；端到端性能还受 Attention、通信和调度影响。
+
+#### Q30. 投机解码为什么有用？猜错了怎么办？
+
+**直接回答：**
+
+> “普通 Decode 每次只生成一个 Token，搬一遍权重做的计算不一定充分。投机解码先让草稿模型或投机头猜几个 Token，再由目标模型并行验证。猜得准就能一次确认多个 Token；猜错就要按算法规则拒绝后面的候选并修正，保证生成分布不被改变。”
+
+**继续追问**：收益取决于接受率、草稿成本、验证开销与 Batch；不能说目标模型只读一次权重就必然快很多。
+
+#### Q31. P/D 分离和 Chunked Prefill 怎么取舍？
+
+**直接回答：**
+
+> “Chunked Prefill 还是在同一组 GPU 上调度 Prefill 和 Decode，只是把长任务切小。P/D 分离则把 Prefill 和 Decode 放到不同的实例，让两边分别做批处理和资源配置。不过 Prefill 算出的 KV 要传到 Decode，路由和传输都要花时间，所以得看目标并发和延迟指标来决定。”
+
+**继续追问**：KV 传输带宽、缓存布局兼容、失败与中止时的资源释放；不能只看两边独立跑得多快。
+
+#### Q32. 一面提到旧芯片缺少虚拟地址能力，具体会影响什么？
+
+**直接回答：**
+
+> “虚拟内存管理可以把程序看到的地址和实际物理显存分开。假如某个驱动缺少映射与重映射接口，一些需要原地址不变、但动态调整物理显存的功能就会受影响，比如某些显存回收和再映射机制。但普通的静态 KV Block 池不一定都依赖这些高级接口，要按具体实现判断。”
+
+**继续追问**：先核对缺少的究竟是一般虚拟寻址能力，还是特定 VMM API；不能把面试官对旧设备举的例子推广到该公司全部芯片和全部功能。
+
+#### Q33. 计算通信 Overlap 为什么有用？怎样知道有没有效果？
+
+**直接回答：**
+
+> “多卡推理中，GPU 可能一边等 All-Reduce 或 All-to-All，一边还有其他计算可以做。如果能把没有依赖关系的计算和通信安排成重叠执行，就能减少总等待时间。但它受数据依赖、Stream 和通信带宽限制，时间线上看着重叠也不等于端到端一定变快。”
+
+**继续追问**：明确同步点、GPU Stream、NCCL/RDMA 的职责；比较端到端指标而不是只比较单个通信算子的耗时。
+
+### 3.5 简历中仍在 Review 的 PR：被问到时再展开
+
+#### Q34. SGLang PR #46596 为什么加这个直方图？测的到底是什么？
 
 **直接回答：**
 
@@ -723,7 +646,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：指标是 `sglang:detokenizer_router_delivery_seconds`。它包含**序列化、发送阻塞、IPC 等待、解码的总时间**，不是四个独立测量值，也不是纯队列等待时间。它**不宣称推理加速**；截至本次核对 PR 仍为 Open。
 
-#### Q38. 为什么跨进程打时间戳不能直接相减？
+#### Q35. 为什么跨进程打时间戳不能直接相减？
 
 **直接回答：**
 
@@ -731,7 +654,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：Linux boot/time-namespace 身份；为什么没有证明时钟域一致时，消息照常转发但不纳入 Histogram；为什么带时间戳的 Multipart 协议要考虑兼容性。现有 PR **保留关闭指标和单 Worker 场景的旧单帧行为**；不能笼统声称所有新旧版本互相兼容。
 
-#### Q39. FlagGems #7733：整数比较为什么会被 FP32 搞错？
+#### Q36. FlagGems #7733：整数比较为什么会被 FP32 搞错？
 
 **直接回答：**
 
@@ -739,7 +662,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：`2**24` 与 `2**24+1` 的例子；`torch.result_type` 混合整型提升；零维 Tensor 和标量比较；不同整数宽度、布尔值、内存非连续输入。**这是正确性修复，不是性能加速 PR**，截至本次核对仍 Open。
 
-#### Q40. FlagGems #7734：slice_backward 为什么怕非连续梯度？
+#### Q37. FlagGems #7734：slice_backward 为什么怕非连续梯度？
 
 **直接回答：**
 
@@ -747,7 +670,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：`grad_output.contiguous()` 对已经连续的输入不额外拷贝；对非连续输入有成本，不能说“零开销”；适用范围是 generic 实现，不代表所有设备特化后端都修好了。PR 仍 Open。
 
-#### Q41. llama.cpp #29576：为什么 Top-K=8，内存还能浪费这么多？
+#### Q38. llama.cpp #29576：为什么 Top-K=8，内存还能浪费这么多？
 
 **直接回答：**
 
@@ -755,7 +678,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：**Logits Buffer 没有整体缩成 Top-K**；缩的是 Probability/Candidate 主机输出缓冲。具体 Qwen3.5 测试配置下，总输出缓冲由约 242.5 MiB 降至 121.3 MiB；**不是整机显存、所有主机内存或推理延迟减半**。PR 仍 Open。
 
-#### Q42. 为什么改缓冲布局前要处理异步拷贝？Pinned Memory 是什么？
+#### Q39. 为什么改缓冲布局前要处理异步拷贝？Pinned Memory 是什么？
 
 **直接回答：**
 
@@ -763,7 +686,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：`cudaMemcpyAsync` 与 Stream/Event 同步边界；Pinned Memory 不等于 GPU 直接访问主机内存的 Zero-Copy；线程同步、设备同步和拷贝结束不是一个概念。此 PR 原始记录同时保留了性能噪声与未完成验证，不能声称它已经证明推理吞吐显著提高。
 
-#### Q43. 简历写“Agent 辅助算子开发”，哪些是你负责的？
+#### Q40. 简历写“Agent 辅助算子开发”，哪些是你负责的？
 
 **直接回答：**
 
@@ -771,7 +694,7 @@ ctest --test-dir build --output-on-failure
 
 **面试官可能连续问**：那你自己写了哪些核心部分？如果现在不给 Agent，你能写出哪一个 Kernel？最近一次 Agent 写错了什么、你怎么发现？**回答时说你真正做过的具体事情；一面实际手写做出一道简单 Triton 题可以作为事实，不要说成独立手写过所有 PR。**
 
-#### Q44. “算子契约、独立参考、对照实验”分别是什么？
+#### Q41. “算子契约、独立参考、对照实验”分别是什么？
 
 **直接回答：**
 
@@ -779,9 +702,9 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：先拿能让 Baseline 失败的回归测试证明 Bug 存在，再看 Candidate 是否修好；保持相同 Prompt、Seed、并发、采样与环境；分别报告正确性、Kernel 耗时和端到端吞吐。**测试通过只能证明覆盖到的条件下通过，不能证明所有硬件与模型都正确。**
 
-### 3.7 两个核心项目：从简历第一句追到最后一个数据
+### 3.6 GraphBudget 与 Teacher Scoring 的技术追问
 
-#### Q45. GraphBudget 的动机是什么？是不是只是复现别人 PR？
+#### Q42. GraphBudget 的动机是什么？是不是只是复现别人 PR？
 
 **直接回答：**
 
@@ -789,7 +712,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：为什么 Decode 的 `M` 小；为什么不能无条件把 Prefill 也切成 M16；遇到不支持的 Shape/Dtype 为什么回退；上游结果在哪种模型、设备上测得，而自己的 72.4% 又在哪种配置上测得，二者不能混用。
 
-#### Q46. GraphBudget 的 72.4% 到底测的是什么？
+#### Q43. GraphBudget 的 72.4% 到底测的是什么？
 
 **直接回答：**
 
@@ -797,7 +720,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：明确对照是**同配置的原生确定性路径**，不能换成非确定性路径；检查 Prompt、生成长度、Seed/采样设置、Warm-up、Graph 状态是否一致。Min 适合低干扰最短耗时的参考，Median 适合典型轮次，P99 反映尾部。**五组数据证明的是已测负载，不足以说明所有负载稳定提升**。
 
-#### Q47. 为什么“输出 Token 一致”还不足以证明整个 Kernel 数值完全相同？
+#### Q44. 为什么“输出 Token 一致”还不足以证明整个 Kernel 数值完全相同？
 
 **直接回答：**
 
@@ -805,7 +728,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：`torch.equal` 与 `allclose` 的差别；FP32 累加、BF16 舍入、原子归约顺序；逐步 Greedy 输出一致和非确定性采样分布不等价。
 
-#### Q48. Teacher Scoring：简历写“只算候选 Logits”，现在项目有什么变化？
+#### Q45. Teacher Scoring：简历写“只算候选 Logits”，现在项目有什么变化？
 
 **直接回答：**
 
@@ -813,7 +736,7 @@ ctest --test-dir build --output-on-failure
 
 **非常重要的版本边界**：简历写的是**早期设计**；后续公开仓库 `yu830/rl-posttrain-sparse-scoring` 的主方案是 **verl TeacherFSDPWorker 的 Full-vocabulary-normalized、Row-chunked LM Head**。二面必须主动区分，不能把早期 `O(NKd)` 的稀疏计算设想和后续 `O(NVd)` 的实际分块实现当成同一套已经验证的收益。
 
-#### Q49. 什么叫“候选集条件 Reverse KL”不等于完整 KL？
+#### Q46. 什么叫“候选集条件 Reverse KL”不等于完整 KL？
 
 **直接回答：**
 
@@ -821,7 +744,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：如果 logits 为 `z_i`，全词表归一化需要 `logsumexp(z_1...z_V)`。只对集合 `C` 归一化，则分母是 `logsumexp(z_i for i in C)`；除非已证明下游目标定义就是条件分布，否则不能替换。这也解释了为什么最新实现仍要在每块内遍历全词表。
 
-#### Q50. 最新 Teacher Worker 的显存结果怎么讲，不夸大？
+#### Q47. 最新 Teacher Worker 的显存结果怎么讲，不夸大？
 
 **直接回答：**
 
@@ -829,7 +752,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：实验基于单张 RTX 5070 Laptop、Qwen2.5-0.5B-Instruct、BF16、FSDP2 CPU Offload、合成输入、`K=32`、`chunk_rows=256`；公开记录的 `N=8192` Worker p50 从 **570.8 ms** 变为 **626.3 ms**，即在该点**峰值分配降低，但耗时没有改善**。不要将显存优化说成推理加速或训练吞吐加速。完整 RL Trainer、多 GPU 和生产稳定性尚未验证。
 
-#### Q51. 为什么不是直接在完整 Logits 生成之后再切块？
+#### Q48. 为什么不是直接在完整 Logits 生成之后再切块？
 
 **直接回答：**
 
@@ -837,9 +760,9 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：原路径的临时 Logits 量级是 `O(NV)`；新路径每次投影最多 `B` 行，临时量级 `O(BV)`，还要保留 `O(NK)` 的紧凑输出及其他 Transformer/FSDP 缓冲。要验证的不只是数值，还包括 Response Mask、Student Loss、梯度和 Worker 路径是否一致。
 
-### 3.8 竞赛与实习：简历上不是推理引擎的内容也能问
+### 3.7 FlagOS 算子竞赛：验证与性能归因
 
-#### Q52. FlagOS Task 156 到底算的是什么？为什么 Segment 和 Head 这么重要？
+#### Q49. FlagOS Task 156 到底算的是什么？为什么 Segment 和 Head 这么重要？
 
 **直接回答：**
 
@@ -847,7 +770,7 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：Segment 长度不一致会带来负载不均；Stride 错误可能不报错但输出不对；Mask 防越界；`rank` 和 Head 维度如何决定计算形状。**第 3 名、平均加速比 10.74× 是简历中的平台结果**，不能说成所有 GPU 或所有 Shape 都达到该加速。
 
-#### Q53. 算子比赛里，平均加速比 10.74× 能直接说明用户服务吞吐提高十倍吗？
+#### Q50. 算子比赛里，平均加速比 10.74× 能直接说明用户服务吞吐提高十倍吗？
 
 **直接回答：**
 
@@ -855,75 +778,3 @@ ctest --test-dir build --output-on-failure
 
 **继续追问**：Amdahl 定律。假设该算子只占原始请求时长的 20%，即使它快 10 倍，理想端到端加速也只有 `1/(0.8+0.2/10)≈1.22×`，不可能 10 倍。
 
-#### Q54. openEuler / openGauss 的空 BLOB 和 DATETIME 协议问题怎么解释？
-
-**直接回答：**
-
-> “这段工作主要是数据库兼容性。空 BLOB 有特殊的长度和数据表示方式，处理不好会在转换时出错；DATETIME 和 TIMESTAMP 在 MySQL 二进制协议里有长度字段，不同长度对应不同的日期时间信息，解析时不能按固定格式硬读。我先把出错输入缩小成最小复现，再对照参考数据库和驱动的行为查问题。”
-
-**继续追问**：空值、零长度与 NULL 不是同一个语义；二进制协议需要区分长度、字段和边界。简历写的是“参与”和“提交 Issue/PR”，不能未经确认就说所有修复均被上游合并。此经历**保留在简历拷打范围**，但按用户最新偏好不放进自我介绍。
-
-#### Q55. 数学建模 MCM C 题 H 奖，面试官会怎么问？
-
-**直接回答模板（应按本人实际分工调整）：**
-
-> “这是一个需要把真实问题转成数据和模型的团队比赛。面试官如果感兴趣，我会讲清楚题目要解决什么、我们如何建模和验证，以及我具体负责哪一部分，而不是只说拿了什么奖。”
-
-**证据边界**：目前简历只写 **2026 MCM C 题 H 奖**，本轮没有核到你的具体任务分工、模型、结果或代码；这些必须用真实材料补，不编一个看起来很合理的个人贡献。
-
-### 3.9 “个人优势”和求职方向也在简历上
-
-#### Q56. “擅长发现行业痛点”，面试官让你举一个例子怎么办？
-
-**直接回答：**
-
-> “我一般不是先想一个复杂方案，而是先找有没有真实的错误或性能瓶颈。像 llama.cpp 的采样缓冲，原来的存储宽度和实际 Top-K 候选数不匹配；这个问题很具体，也能用内存占用做对照。选定之后，我会先确认 Baseline，处理边界测试，最后再看修改有没有真正解决问题。”
-
-**继续追问**：别把来自上游 PR/Issue 的问题讲成自己最先发现；区别是**发现线索、验证问题、实现修复、验证结果**，这四步可以由不同人完成。
-
-#### Q57. 简历写“论文与开源项目复现能力”，到底什么叫复现？
-
-**直接回答：**
-
-> “复现不是把别人 GitHub 命令跑通就算完成，而是要先确认版本、环境、输入、评价指标和原论文实验设置，再看结果是否在同一个口径上。如果结果差很多，要查是依赖版本、模型配置、精度、随机性还是计时方法的问题。负结果也应该保留。”
-
-**继续追问**：论文声称与自己本机实测分别是什么；代码能跑通不等于数值相同；性能实验要记录 GPU 型号、PyTorch/CUDA、Batch/并发、数据集、Warm-up、测量重复次数和统计口径。
-
-#### Q58. 你写了 RL Infra、LLM Inference、Runtime、GPU Kernel，实际方向是什么？
-
-**直接回答：**
-
-> “我现在更希望做推理 Runtime 和性能优化。做过一些 GPU Kernel 和框架相关的项目，但并不意味着所有底层方向都很深入。后训练项目也让我接触了训练端和推理端怎么配合。如果团队主要做 SGLang/vLLM 到新硬件的适配，我觉得这个方向和自己已经做过的工作比较接近。”
-
-**继续追问**：哪些能力已经动手验证、哪些只是了解概念；如何把时间主要投入到岗位最需要的算子正确性、Backend 适配和性能定位，而不是同时承诺精通所有方向。
-
-#### Q59. 为什么“了解”和“熟悉”要谨慎区分？
-
-**直接回答：**
-
-> “我会把自己独立完成过的事和只读过原理的东西分开说。比如 GEMM 分块我能解释数据复用、分块形状和实际权衡，但不会说自己手写过很多高性能 CUDA Kernel。NVTX 我了解用途，但一面时确实没有实际用过。面试官问到没有操作过的部分，我会直接说明边界。”
-
-**记住**：可以承认不会某项具体工具，但不要把会的基础原理也一并否定；先回答自己确定知道的部分，再说明还没实操的部分。
-
-#### Q60. 简历里的 CET-6 550 分，能不能读英文源码与文档？
-
-**直接回答：**
-
-> “我平时看推理框架、CUDA 和 Triton 的资料，英文官方文档和 GitHub Issue/PR 是很重要的来源。遇到不熟悉的术语会结合代码和实验查清楚，能用英文写简短的技术问题说明。但我不会把通过六级直接等同于英语表达没有障碍。”
-
-**继续追问**：给出自己实际看过的 PR、英文 README 或错误日志，以及如何从报错、源码和文档确认答案；不要凭考试分数声称有未验证的口语或团队英语协作经验。
-
-### 3.10 最后用这 8 个连续追问检查自己
-
-下面是**根据简历生成的连续追问链**，不是一面录音中的原题。每一链能先说短答，再接两个追问，就具备基本面试可用性。
-
-1. **GEMM**：M/N/K 是什么 → 为什么分块减少 HBM 访问 → BM/BN/BK 各影响什么 → M=16 时 BM 变小会不会自动增加 CTA？
-2. **CUDA/Triton**：Grid/Block/Warp/Thread → `tl.program_id`/`tl.arange` → Mask 防越界 → Stride 为 0 的张量怎么办？
-3. **Profiling**：Nsight Systems vs Compute → `cuda_gpu_kern_sum` → CPU 长 Sync 是不是 CPU-bound → NVTX 你真的用过吗？
-4. **GraphBudget**：灵感来源 → M16/N64/K128 → 为什么保留确定性 → 72.4% 的对照组、统计量和负载是什么？
-5. **SGLang PR**：测哪段消息 → 为什么 Histogram → 是否独立测出序列化和 IPC → 跨进程为什么要校验时钟域？
-6. **FlagGems**：`2**24+1` 为什么等于 `2**24` 的 FP32 结果 → 混合整数如何比较 → `expand` 的 zero stride 如何处理？
-7. **llama.cpp**：Top-K=8 为什么还按词表大小分配 → 哪些缓冲区减半 → Pinned Memory vs VRAM → 异步拷贝未完成时能不能改布局？
-8. **Teacher Scoring**：早期稀疏候选方案 → 为什么完整词表归一化不可省 → Chunk 放在 LM Head 前还是后 → 为什么显存降 81% 却没有在 N=8192 加速？
-
-**验收标准**：不要只记关键词。对每个箭头后的问题，都要能先用两三句自然中文讲明白；面试官要求细节时，能给出一个具体公式、代码、输入形状、测试条件或反例。遇到没有证据的个人结果，宁可说清楚实验边界，也不填一个好听的数字。
