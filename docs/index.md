@@ -194,115 +194,97 @@
 
 ---
 
-### 2.3 简历相关八股（口述详细版，结合项目实例）
+### 2.3 技术问题｜先说人话，再讲原理
 
-#### A. CUDA、GPU 架构与 Triton
+这里是**二面可能继续问的内容**，不是一面真实问过的题。回答时先把问题说清楚，再结合项目举例。下面每段都按能直接开口的方式写，不需要一上来背完整原理。
 
-**1. GPU 的存储层级有哪些？各自的特点是什么？**
-> “从离计算单元最近、速度最快到最远、最慢依次是：
-> 第一层是 **Register（寄存器）**，每个线程私有，延迟最低、带宽最高，但容量很小，局部变量过多会导致寄存器溢出（Spilling）到本地内存（本质在 HBM 里），性能急剧下降；
-> 第二层是 **Shared Memory 和 L1 Cache**，位于每个 SM 片上，同一个 Block 内的线程共享 Shared Memory，由程序员显式管理，速度非常快，常用来做 GEMM 分块的数据缓存和块内协作；
-> 第三层是 **L2 Cache**，全芯片所有 SM 共享，硬件自动管理，用来缓解对 HBM 的访问压力；
-> 最外层是 **Global Memory（HBM）**，容量最大，但带宽相对算力有限、访问延迟高达几百个时钟周期。
->
-> GPU 优化的核心主线就是尽量把数据留在寄存器和 Shared Memory 里反复用、减少来回读 HBM。比如我在 **GraphBudget** 里调小 M GEMM 的分块大小，本质上就是在保证共享内存和寄存器不溢出的前提下，平衡片上数据复用和 SM 并行度。”
+#### A. GPU、CUDA 与 Triton
 
-**2. 什么是 Shared Memory 的 Bank Conflict？怎么避免？**
-> “为了提供极高的片上带宽，Shared Memory 在物理上被划分成 32 个独立的存储体（Bank），连续的 4 字节（32-bit 字）依次轮流存放在 0 到 31 号 Bank 里。当同一个 Warp 里的 32 个线程同时访问 Shared Memory 时，如果它们落在不同的 Bank，硬件可以在一个事务里并行响应；如果多个线程同时访问同一个 Bank 里的**不同地址**，硬件无法同时输出，只能串行化，这就是 Bank Conflict，最坏情况会导致 32 倍延迟（如果多个线程读同一个 Bank 的**完全相同地址**，硬件会触发广播机制，不算冲突）。
->
-> 常见避免方法是在二维数组的行尾加 **Padding**（比如把一行 32 个 float 声明成 33 个 float），把按列访问时原本对齐到同一个 Bank 的元素错开；或者通过 Swizzle（异或重排索引）打散 Bank 映射。”
+**1. GPU 的存储层级是什么？**
 
-**3. 什么是内存合并访问（Memory Coalescing）？**
-> “GPU 访问全局显存（HBM）不是按单个字节读的，而是按固定大小的内存事务（通常是 32 字节或 128 字节缓存行）整块搬运。如果同一个 Warp 里相邻的 32 个线程，访问的是全局显存中**连续对齐**的地址，硬件就能把这 32 次请求合并成 1 到 2 次内存事务，带宽利用率接近 100%；如果访问跨步很大或随机离散，硬件就得发起很多次事务，每次只用到一小部分有效字节，显存带宽就被严重浪费。
->
-> 比如我在 **FlagOS Task 156** 做多 LoRA 分段 K 投影时，输入张量可能是非连续 stride，我在 Triton 里把 stride 显式传进 Kernel 计算指针，同时在短 Decode 场景下把多个 head 分组打包，尽量让最内层访问保持连续合并；而像 **FlagGems PR #7734** 的 `slice_backward`，底层假设线性连续读取，遇到非连续梯度就必须按需转成连续布局，否则既可能出错也会破坏合并访存。”
+> “可以简单理解成一层层离计算单元更近的存储：寄存器最靠近线程，速度快但空间小；Shared Memory 在一个线程块里共享，适合放大家反复用的数据；L2 Cache 是多个 SM 共用的缓存；HBM 容量最大，但从那里反复读数据代价比较高。所以做 Kernel 优化，经常要考虑能不能少去 HBM 拿数据。”
 
-**4. Compute-bound 和 Memory-bound 怎么理解？在 LLM 推理里分别对应什么？**
-> “区分标准是看算子的**算术强度**（总浮点计算量除以总显存访存量）和硬件的**算力带宽比**谁大。算术强度高、数据搬进来能算很久、瓶颈卡在计算单元上的，是 **Compute-bound**，典型如大 batch GEMM 和推理的 Prefill 阶段；算术强度低、搬了大量数据只做很少计算、计算单元在等显存的，是 **Memory-bound**，典型如 Decode 阶段的 GEMV（小 M GEMM）、Softmax、RMSNorm、RoPE 和逐元素算子。
->
-> 对应到我的项目里：**GraphBudget** 优化的是 Decode 阶段的小 M GEMM，并发只有 16，天然偏访存和低利用率，所以要把分块 M 压小、切出更多 CTA；而 **rl-posttrain-sparse-scoring** 则是砍掉全词表 LM Head 投影，直接从源头上同时减少了无关计算和大张量数据传输。”
+**追问**：Shared Memory 要手动管理，L1/L2 主要由硬件缓存；寄存器和 Shared Memory 用多了也会降低可同时运行的线程块数。
 
-**5. Occupancy（占用率）是不是越高越好？**
-> “不是。Occupancy 是每个 SM 上实际活跃的 Warp 数占硬件上限的比例。GPU 靠硬件级零开销 Warp 切换来隐藏显存访问延迟——一个 Warp 等数据时，SM 立刻切去执行另一个就绪的 Warp，所以 Occupancy 太低时可能藏不住访存延迟。
->
-> 但它并不是越高越好：每个 SM 总的寄存器和 Shared Memory 容量有限，如果为了强行拉高 Occupancy 而压缩单线程寄存器用量或把分块切得过小，会导致寄存器溢出（Register Spilling）或者片上数据复用率下降，反而让 HBM 访存变多。像我在 **GraphBudget** 里把 `BM` 从大块压到 16、`BN` 设为 64，同时 `BK` 保留 128，就是在提高 SM 活跃块数和保持 K 维片上复用之间找平衡点。”
+**2. Bank Conflict 是什么？**
 
-**6. Triton 和 CUDA 的核心区别是什么？各自适用什么场景？**
-> “最核心的区别是编程粒度。CUDA 是 **Thread-level（线程级）** 编程，开发者要手动算每个线程的 ID，显式管理 Global 到 Shared Memory 的搬运、线程同步（`__syncthreads`）、内存合并访问和 Bank Conflict，控制力最强但开发调试成本高。
->
-> Triton 是 **Block-level（块级）** 编程，每个 Program 实例对应一个线程块（CTA），开发者只需用类似 NumPy 的块操作描述切分、加载、计算和写回，底层的线程映射、内存合并、Shared Memory 分配和部分流水线调度由编译器自动生成。我在 **GraphBudget** 的小 M GEMM、**FlagOS Task 156** 的分段 LoRA 以及 **FlagGems** 算子库里都用 Triton，优势是开发迭代极快、跨硬件移植成本低；而像标准大矩阵 GEMM 或需要极限压榨特殊硬件指令（如 Hopper TMA / WGMMA）时，手写 CUDA / CUTLASS 上限更高。”
+> “Shared Memory 被分成多个 Bank。一个 Warp 的线程如果刚好去不同的 Bank 取数据，可以并行完成；如果好几个线程访问同一个 Bank 的不同地址，就可能得分几次处理，性能会下降。常见办法是给二维数据加 Padding，或者重新安排线程和地址的对应关系。”
 
-#### B. LLM 推理引擎核心（SGLang / vLLM / KV Cache / CUDA Graph）
+**追问**：同地址广播一般不算 Bank Conflict；具体规则要看架构和访问宽度。
 
-**7. Prefill 和 Decode 两个阶段有什么区别？核心指标是什么？**
-> “**Prefill 阶段**把用户输入的整段 Prompt 一次性并行送进模型，算出所有位置的 KV Cache 并生成第 1 个输出 token。因为输入序列长、矩阵乘 M 维度大、计算密度高，属于 **Compute-bound**，决定首字延迟 **TTFT（Time To First Token）**。
->
-> **Decode 阶段**自回归逐个生成 token，每步每个请求只输入 1 个新 token，却要把整层模型权重和全部历史 KV Cache 从 HBM 读一遍。搬运量极大、计算量极小，是典型的 **Memory-bound**，决定每 token 生成间隔 **TPOT（Time Per Output Token）** 和整体输出吞吐。我在 **GraphBudget** 里专门针对 Decode 阶段的小 M GEMM 做分块调优，并在大 M 或 Prefill 场景自动回退原生路径，就是因为这两个阶段的计算特征完全不同。”
+**3. 什么是合并访存？**
 
-**8. KV Cache 解决了什么问题？PagedAttention 和 RadixAttention 的核心机制是什么？**
-> “自回归生成时因为有因果掩码，历史 token 的 Key 和 Value 向量在后续步骤不会变化。把它们缓存在显存里，每步只算新 token 的 Q、K、V 再和历史 KV 做 Attention，把单步复杂度从平方级降到线性级，本质是用显存换算力。
->
-> 但序列长度动态变化，传统按最大长度静态预分配连续显存会造成严重碎片，限制并发量。**vLLM 的 PagedAttention** 借鉴操作系统虚拟内存分页，把 KV Cache 切成固定大小的物理块（Block），每个请求用块表（Block Table）把逻辑块映射到非连续物理块，按需申请释放，几乎消除了显存碎片。
->
-> **SGLang 的 RadixAttention** 在分页基础上，把所有请求用过的 KV Cache 组织成一棵基数树（Radix Tree）。在多轮对话、长 System Prompt、Few-shot 或 Agent 多分支场景下，只要新请求和已有节点共享前缀，就能直接命中复用 KV Cache、跳过重复 Prefill；显存紧张时再按 LRU 从叶子节点驱逐。”
+> “GPU 的一个 Warp 会一起发起内存访问。如果相邻线程读的是相邻、对齐的数据，硬件就能用较少的内存事务把它们取回来。如果每个线程隔很远读一个数，就会浪费带宽。写 Triton 时除了索引算对，还要看这些索引在内存里是不是连续。”
 
-**9. Continuous Batching（连续批处理）和 Chunked Prefill（分块预填充）分别解决什么问题？**
-> “**Continuous Batching** 解决静态批处理的空等浪费。传统 Static Batching 要等一个 batch 里最长的请求跑完，短请求占的槽位和显存才能释放，GPU 大量空转；Continuous Batching 把调度粒度细化到每个前向迭代步（iteration-level），有请求结束立刻退出释放，同时把队列里的新请求插进来一起算，显著提升吞吐。
->
-> **Chunked Prefill** 解决长 Prompt 插队导致的 Decode 卡顿。一个几万 token 的 Prefill 一次性跑完会独占 GPU 几百毫秒，把并发 Decode 的 TPOT 拖出明显毛刺。Chunked Prefill 把长 Prompt 按固定 token 预算切块，和正在 Decode 的请求打包进同一个混合 batch 里执行，既利用 Prefill 填补 Decode 的算力空闲，又稳住了单步延迟。”
+**4. Compute-bound 和 Memory-bound 怎么判断？**
 
-**10. CUDA Graph 的原理是什么？为什么 Decode 阶段收益大？有哪些限制？**
-> “正常执行推理代码时，CPU 要按顺序逐个调 CUDA API 把几百个小 Kernel 下发到 GPU（Launch Overhead）。Prefill 阶段每个 Kernel 算得久，CPU 下发耗时藏得住；但在小模型或小 batch 的 Decode 阶段，单个 Kernel 只跑几微秒，比 Python/C++ 准备参数和发射的时间还短，时间线上 GPU 会出现大量空隙，变成 CPU-bound。
->
-> **CUDA Graph** 在运行前把一整轮 Decode 的所有 Kernel 发射和依赖录成一张静态执行图，推理时 CPU 只需发一次 `cudaGraphLaunch`，整张图由驱动和硬件连续调度执行，基本消除 CPU 发射开销。
->
-> 它的核心限制是**静态性**：图内张量的显存地址、输入 shape 和控制流必须固定，不能有依赖 CPU 判断的动态分支或动态分配。因此推理引擎启动时会按一组离散 batch size（比如 1、2、4、8、16、32）分桶捕获多张图，运行期向上 padding 到最近的桶；遇到含动态控制流或不可捕获算子的模型，就用 **Piecewise CUDA Graph（分段图）** 切开捕获。”
+> “一个算子慢，可能是算力不够，也可能是数据搬得太慢。可以比较它做了多少计算、实际搬了多少字节，再看 GPU 的算力和带宽上限。一般大矩阵的 Prefill 更容易受算力限制，小 Batch 的 Decode 更容易受权重读取和 KV 访问限制。但这是常见情况，不是每个模型和每个 Batch 都一样。”
 
-**11. SGLang 和 vLLM 的整体架构特点是什么？**
-> “两者底层都采用 Continuous Batching、分块 KV 管理和 CUDA Graph 加速。
->
-> `SGLang` 把系统拆成三个独立进程：**Tokenizer Manager**（HTTP 与分词）、**Scheduler**（常驻 GPU 做连续批处理调度、RadixAttention 前缀树管理和模型前向）和 **Detokenizer Manager**（token id 转文本流式返回），进程间用 ZMQ IPC 异步解耦，避免 Python 侧网络 I/O 和编解码阻塞 GPU 主循环。我之前提的 **SGLang PR #46596** 就是给 Scheduler 到 `MultiDetokenizerRouter` 这段 ZMQ IPC 交付链路补齐序列化、队列等待和解码三段延迟直方图。
->
-> `vLLM` 生态覆盖最广，模型和硬件插件丰富，最新的 V1 架构同样采用了前后端进程解耦、零开销前缀缓存和分段 CUDA Graph，两者在系统架构上高度趋同。”
+**追问**：Nsight Compute 的 DRAM 吞吐、SM 利用率和 Roofline 要结合看，不能只看 GPU Utilization 就下结论。
 
-#### C. JD 延伸高频概念（口述直觉版）
+**5. Occupancy 越高越好吗？**
 
-**12. FlashAttention 和 Flash-Decoding 分别解决了什么问题？**
-> “标准 Attention 要把巨大的 `N × N` 注意力分数矩阵写回 HBM，读出来做 Softmax 再写回，最后再读出来乘 `V`，长序列下显存和带宽双双爆炸。**FlashAttention** 把 Q、K、V 分块搬进片上 SRAM，用 Online Softmax 边遍历 KV 块边维护局部最大值和归一化系数，全程不把 `N × N` 矩阵落盘到 HBM，最终只写回一次结果 `O`。我最近刚在 **FlagGems PR #9124** 里修过通用 SDPA math 路径对 ATen `enable_gqa` 和 GQA K/V head 映射的兼容，核心也是保证分组查询注意力在不同后端语义一致。
->
-> **Flash-Decoding** 针对长上下文 Decode 场景：此时每个请求的 Q 只有 1 个 token，只按 batch 和 head 维度并行根本喂不饱 SM。它沿着历史 KV Cache 的序列长度维度切分，让多个线程块并行算局部 Attention 和局部 Softmax 统计量，最后再起轻量归约 Kernel 合并，把长文本 Decode 的并行度和显存带宽利用率拉起来。”
+> “不是。Occupancy 高一些，GPU 有更多 Warp 可以切换，能更好地隐藏等待内存的时间。但如果为了堆更多 Warp，把分块切得太碎，数据复用反而差了；或者寄存器不够用发生溢出，也会变慢。最后还是看实际耗时，不是单独追一个利用率数字。”
 
-**13. TP、PP、DP、EP 四种并行策略的区别与适用场景是什么？**
-> “**DP（数据并行）**：每张卡放完整模型副本，各自处理不同请求，卡间几乎无计算通信，适合单卡放得下、追求高吞吐的场景。
->
-> **TP（张量并行）**：把单层内部权重矩阵切分到多卡协同计算同一批请求，每层需要两次 All-Reduce 同步通信，强依赖机内高带宽互联（如 NVLink），用来放单卡装不下的大模型并降低单请求延迟。
->
-> **PP（流水线并行）**：按模型层数切分到不同卡或节点，卡间只点对点传激活值，通信量远小于 TP，适合跨节点扩展，但会引入流水线气泡。
->
-> **EP（专家并行）**：用于 MoE 架构，把不同 Expert 分散到不同卡上，通过 All-to-All 把 token 路由到对应专家卡上算完再传回，支撑超大参数 MoE 推理。”
+**6. Triton 和 CUDA 有什么区别？**
 
-**14. 低比特量化（W4A16 / FP8）和投机采样（Speculative Decoding）的核心收益来源是什么？**
-> “**W4A16** 把权重压成 4-bit 存显存，计算时在片上反量化成 FP16。Decode 阶段是 Memory-bound、时间全花在搬权重上，体积缩到四分之一就能显著缩短搬运时间、提升吞吐并省显存给 KV Cache。**FP8** 是权重和激活都用 8-bit 浮点，在原生 FP8 Tensor Core 上同时减半带宽需求、翻倍矩阵算力，Prefill 和 Decode 双收益。
->
-> **投机采样**利用了 Decode 阶段算力过剩的特点：并行验证 4 到 8 个 token 的耗时和算 1 个 token 差不多（都要读一遍权重）。先用小草稿模型或投机头（如 EAGLE / MTP）快速猜出几个后续 token，再交给大模型一次前向并行验证，通过拒绝采样接收正确前缀，在不改变原模型输出分布的前提下把单步产出从 1 个 token 提高到 2 到 4 个。”
+> “CUDA 更偏线程级编程，我需要明确每个线程做什么、怎么同步、怎么搬数据。Triton 更偏块级编程，我先描述一个 Program 处理一块什么形状的数据，编译器再负责不少底层映射。Triton 写矩阵和融合算子通常开发更快，但想写快还是得懂访存、分块、并行度和片上资源。”
 
-**15. P/D 分离（Prefill-Decode Disaggregation）为什么有必要？**
-> “Prefill 吃算力、适合小并发，Decode 吃显存带宽、适合攒大 batch，混跑会互相干扰：长 Prompt 的 Prefill 一进来，正在 Decode 的请求就被阻塞，TPOT 尾延迟飙升。P/D 分离把集群拆成专门的 Prefill 实例和 Decode 实例，Prefill 算完首字后通过 RDMA（IB/RoCE）把 KV Cache 传给 Decode 实例继续生成，两边各自独立选并行策略和扩缩容。工程重点在 KV 传输带宽、计算通信重叠以及传输完成前的显存释放时机。”
+#### B. 推理引擎 Runtime
 
-**16. 如果自研芯片早期缺少虚拟地址管理（VMM），适配 vLLM / SGLang 会遇到什么难点？**
-> “推理框架里一些高级显存特性——比如动态显存池按需扩容、碎片整理，以及 vLLM 的 Sleep Mode（释放物理显存，唤醒时原地映射回原虚拟地址以保持 CUDA Graph 指针不变）——都依赖底层驱动的虚拟内存管理接口（如 `cuMemCreate`、`cuMemMap`）。
->
-> 如果早期硬件或驱动不支持 VMM，物理显存和虚拟地址无法解耦，框架只能退回到启动时静态预分配一整块大显存（再由框架层自己管理固定大小的 KV Block 池），原地重映射或动态伸缩显存池要么不可用，要么需要代价很高的全量拷贝且会破坏 CUDA Graph 地址稳定性。因此适配时要先明确驱动能力边界，优先把静态预分配路径和核心算子跑稳、跑快，等新硬件具备完整 VMM 后再接入高级特性。”
+**7. Prefill 和 Decode 有什么不同？**
 
-#### D. C++ / Python 工程基础
+> “Prefill 是先把用户输入的 Prompt 处理完，可以一次算很多 Token；Decode 是之后一个一个生成新 Token。Prefill 的矩阵通常更大，Decode 每步的 M 往往比较小，却要反复读权重和历史 KV。用户体验上，TTFT 关心多久看到第一个 Token；TPOT 关心后面生成的速度。但 TTFT 还会受到排队、调度和首步解码影响。”
 
-**17. Python 有 GIL，为什么推理引擎还能用 Python 写上层调度？什么时候会遇到瓶颈？**
-> “GPU 实际计算在 C++/CUDA 扩展里异步执行，进入扩展时会释放 GIL，所以 GIL 不限制 GPU 算力。但小模型或高并发短 Decode 下，GPU 算得极快，如果 Python 侧的请求队列、张量构造、Tokenizer 编解码和 HTTP 网络全挤在一个进程里，GIL 竞争和单核解释器开销就会超过 GPU 执行时间，导致 GPU 空转。工程上常用多进程拆分（如 `SGLang` 的 Tokenizer / Scheduler / Detokenizer 分离，我在 PR #46596 里观测的就是这段跨进程 IPC 链路）、CUDA Graph 减少逐算子发射，以及热点调度下沉 C++/Rust。”
+**8. KV Cache、PagedAttention、RadixAttention 分别解决什么？**
 
-**18. Pinned Memory（页锁定内存）的原理是什么？使用时要注意什么？**
-> “操作系统默认分配的可分页内存可能被换出到磁盘或改变物理页映射，GPU 的 DMA 引擎不能直接安全访问，驱动必须先拷到临时锁页缓冲再走 PCIe 传输，多一次 CPU 拷贝且无法真正异步。Pinned Memory 把物理页锁在 RAM 里，DMA 可以零拷贝直传并支持和 GPU 计算并行的异步拷贝（`cudaMemcpyAsync`）。
->
-> 副作用是锁页内存不能被系统回收或换出，分配过大会挤压宿主机可用内存导致变慢或 OOM。我在 **llama.cpp PR #29576** 里就是按实际 Top-K 候选宽度动态收缩采样输出的页锁定主机缓冲，把单配置下的锁页内存从 242.5 MiB 降到了 121.3 MiB（减少约 50%），同时在布局变更前补齐未完成异步拷贝的同步保护。”
+> “KV Cache 是把之前 Token 算过的 Key 和 Value 留下来，后面解码不用把整段历史重新算一遍。PagedAttention 是把 KV 分成固定大小的块，逻辑上连续、物理上不一定连续，这样显存管理更灵活。RadixAttention 更关注相同前缀的复用，比如多轮对话的前半段没变，就尽量直接复用已有 KV。”
+
+**9. Continuous Batching 和 Chunked Prefill 是什么？**
+
+> “Continuous Batching 允许请求在每个生成步骤之间进出批次，不必等整批都结束才加入新请求。Chunked Prefill 是把长 Prompt 的计算拆成几块，穿插到 Decode 请求中，减少一次长 Prefill 把其他请求卡住的情况。两者解决的是不同问题，可以一起使用。”
+
+**10. CUDA Graph 为什么常用于 Decode？**
+
+> “正常执行时，CPU 得一个个发 Kernel，单个 Kernel 很短时，发射开销会变得明显。CUDA Graph 可以先把一段执行过程录下来，以后直接回放，减少 CPU 反复发指令的成本。但捕获需要满足地址、形状和算子行为等限制，还会占用额外显存，所以不是什么场景都应该强行用 Full Graph。”
+
+**11. SGLang 和 vLLM 大体怎么工作？**
+
+> “一个请求进来以后，先做接入和分词，再进入调度器。调度器决定这一轮哪些请求可以跑、需要多少 KV 空间，然后 GPU 执行模型，最后把 Token 转成文本返回。SGLang 和 vLLM 都会做连续批处理、KV 管理和执行优化，但各自的调度细节、缓存实现和后端支持不完全一样。”
+
+#### C. JD 常见延伸问题
+
+**12. FlashAttention 和 Flash-Decoding 差在哪？**
+
+> “FlashAttention 主要是为了避免把很大的 Attention 分数矩阵写回显存。它把 Q、K、V 分块处理，边算边更新 Softmax 需要的统计量。Flash-Decoding 更针对长上下文生成：只有一个新 Query 时并行度不够，就把历史 KV 分段，让多个计算块一起处理，最后把局部结果合并。”
+
+**13. DP、TP、PP、EP 怎么选？**
+
+> “DP 是多张卡各跑一份模型，处理不同请求，适合单卡装得下、想提高吞吐。TP 是把一层里的矩阵拆到多卡一起算，单卡放不下或者追求延迟时常用，但要付通信成本。PP 是把不同层放在不同卡上，适合跨节点扩展，代价是流水线等待。EP 是 MoE 把不同专家分到不同卡，需要把 Token 送到对应专家，通信通常离不开 All-to-All。”
+
+**14. W4A16、FP8 和投机解码为什么可能加速？**
+
+> “W4A16 主要是把权重存得更小，Decode 读权重时能省带宽，但计算还要考虑反量化开销。FP8 如果硬件支持高效的低精度 Tensor Core，可以同时减少数据量和提高计算效率，但也得检查 Scale 和精度。投机解码则是先猜几个 Token，再让大模型一起验证；猜得准才有明显收益，还要保证采样分布正确。”
+
+**15. 为什么做 P/D 分离？**
+
+> “Prefill 和 Decode 喜欢的硬件负载不一样，混在一起可能相互干扰。P/D 分离让一组 GPU 专门做 Prefill，另一组做 Decode，各自选择并行方式和批大小。但 Prefill 算完要把 KV 交给 Decode，这个传输也有开销；只有收益能盖过传输和调度成本时才值得分离。”
+
+**16. 自研芯片没有 VMM 会怎样？**
+
+> “VMM 就是让程序看到的虚拟地址和实际占用的物理显存分开管理。如果驱动缺少这套能力，一些依赖地址映射、显存回收后再映射的高级功能可能用不了，或者要退回到更保守的分配方式。但普通的静态 KV Block 管理不一定都依赖 VMM，得看框架具体用到了哪些接口。”
+
+#### D. Python 与基础工程
+
+**17. Python 有 GIL，为什么还能写推理调度？**
+
+> “GPU 算矩阵不是靠 Python 解释器一条一条执行的，Python 更多是在安排任务，然后交给后端去执行。所以 GIL 不等于 GPU 只能串行算。但如果请求很多、每步 GPU 工作又很短，Python 调度、对象处理和发射开销就可能成为瓶颈。这时会考虑多进程、C++/Rust 实现热点部分，或者用 CUDA Graph 减少发射。”
+
+**18. Pinned Memory 是什么？**
+
+> “Pinned Memory 就是把一部分主机内存页锁住，不让系统随便换出。这样 GPU 做 DMA 传输时更方便，通常也更适合异步拷贝和计算重叠。但锁页内存不能无限用，太多会影响系统内存管理。我在 llama.cpp 的优化就是让采样结果的主机缓冲不要按整个词表过量分配。”
+
+**追问**：Pinned Memory 支持高效数据拷贝，**不等于所有 Pinned Memory 访问都是 Zero-Copy**；直接映射主机内存给 GPU 访问是另一种机制。
 
 ---
 
