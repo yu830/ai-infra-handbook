@@ -88,21 +88,29 @@
 
 ## 二、二面准备
 
-### 2.1 自我介绍（自然口述版，约 1 分钟）
+### 2.1 自我介绍（口述版，约 70–80 秒）
 
 > “面试官您好，我是哈尔滨工程大学电子信息工程专业的 28 届本科生。
 >
-> 我最近主要在做大模型推理引擎和 GPU 算子相关的项目。技术上主要用 Python、C++ 和 Triton，平时会看 SGLang 的推理流程，也做一些 Kernel 优化和性能分析。
+> 之前我在 openEuler 社区参与过数据库兼容性问题的定位和修复，也做过 FlagOS 的 Triton 算子优化赛题。最近主要在做大模型推理系统相关的项目。技术上常用 Python、C++ 和 Triton，平时也会看 SGLang 的源码，做一些推理链路分析和性能测试。
 >
-> 比较有代表性的项目是 GraphBudget。我针对 SGLang Decode 阶段的小矩阵乘法调整了 Triton 分块，在一组固定测试负载下，输出吞吐提高了大约 72%。
+> GraphBudget 是我投入比较多的一个项目。我针对 SGLang 确定性 Decode 阶段的小矩阵乘法调整了 Triton 分块，在固定负载下，输出吞吐提高了大约 72%。
 >
-> 开源方面，我给 SGLang、llama.cpp 和 FlagGems 提交过一些 PR，主要涉及推理链路延迟、采样内存和算子正确性。另外，我还做过一个后训练 Teacher 打分的显存优化项目。
+> 开源方面，最近有四个 PR 合并了：FlagGems 的 GQA 注意力兼容修复、AIPerf 的两项多轮对话压测改进，以及 Relax 的 CPU Fallback 测试隔离。另外，我在 SGLang 和 llama.cpp 也有正在 Review 的 PR，分别涉及推理链路延迟和采样内存。
 >
-> 这次应聘推理引擎研发实习，主要还是希望继续做推理框架适配和性能优化。”
+> 这次应聘推理引擎研发实习，希望继续做推理框架适配、Runtime 优化和性能分析。”
 
-**一面的直接反馈：** 当时自我介绍主要讲了项目，面试官提醒还可以讲一下专业技能。所以这次按照“学校与方向 → 技术栈 → 一个代表项目 → 开源贡献 → 求职意向”组织，**技术栈不要再遗漏**。
+**为什么这样安排：** 从过去参与的 openEuler 和 FlagOS 经历讲起，再讲现在的推理项目；把 Python、C++、Triton 说清楚，但不把自己介绍成专职 GPU Kernel 工程师。代表项目只保留一个核心结果，其他经历用合并的开源贡献说明工程能力。
 
-**记忆要点：** Python、C++、Triton；SGLang；GraphBudget 固定负载吞吐约 +72%；开源 PR；Teacher Scoring。面试官继续问时，再准确说明 72.4% 是 5 组 A/B 的配对提升中位数。不要把 Open PR 说成已合并。
+**近期已合并 PR（不用在自我介绍里背编号）：**
+- FlagGems [#9124](https://github.com/flagos-ai/FlagGems/pull/9124)：通用 SDPA math 路径的 GQA 接口与 K/V 头映射修复；没有在 Sunrise/PTPU 实卡上验证。
+- NVIDIA AIPerf [#1626](https://github.com/ai-dynamo/aiperf/pull/1626)：多轮合成数据的轮数、间隔分布采样。
+- NVIDIA AIPerf [#1674](https://github.com/ai-dynamo/aiperf/pull/1674)：新会话开始与后续轮次的请求到达节奏。
+- Relax [#523](https://github.com/redai-studio/Relax/pull/523)：CPU Fallback 测试不再被宿主机加速器状态影响。
+
+**仍在 Review：** SGLang [#46596](https://github.com/sgl-project/sglang/pull/46596) 和 llama.cpp [#29576](https://github.com/ggml-org/llama.cpp/pull/29576)。这两项只能说“提交了 PR，正在 Review”，不能放进“已合并的四个”里面。
+
+**面试追问时才展开：** GraphBudget 的 72.4% 是固定负载下五组 A/B 配对吞吐提升的中位数；FlagOS 只说实际做过的赛题与测试，不夸大成长期从事 GPU 算子研发。面试官问具体技术栈时，分别讲自己做过什么，不用泛泛地说“精通 CUDA、Triton”。
 
 ---
 
