@@ -88,31 +88,28 @@
 
 ## 二、二面准备
 
-### 2.1 自我介绍（口述版，约 70–80 秒）
+### 2.1 自我介绍（口述版，约 60–70 秒）
 
 > “面试官您好，我是哈尔滨工程大学电子信息工程专业的 28 届本科生。
 >
-> 我主要做大模型推理系统相关的项目和开源贡献。平时主要用 Python，也接触过 PyTorch、Triton 和 SGLang，会看推理流程和 GPU 执行时间线。之前还参加过 FlagOS 的 SGLang 算子优化赛题。
+> 我最近主要在做大模型推理引擎相关的项目。平时主要用 Python 和 PyTorch，也用 Triton 写过算子，平时会看 SGLang 的源码和推理流程。之前还参加过 FlagOS 的算子优化比赛。
 >
-> 项目方面，比较有代表性的是 GraphBudget。我针对 SGLang 确定性 Decode 阶段的小矩阵乘法调整了 Triton 分块，在固定测试负载下，输出吞吐提高了大约 72%。
+> 比如 GraphBudget 这个项目，我针对 SGLang 确定性 Decode 阶段的小矩阵乘法调整了 Triton 分块。在一组固定负载下，输出吞吐提高了大约 72%。
 >
-> 开源方面，最近有四个 PR 合并了。主要解决过三类问题：一个是注意力计算对 GQA 的兼容问题；两个是让多轮对话压测的数据分布和请求到达节奏更准确；还有一个是让 CPU 相关测试在装了 GPU 的机器上也不会被错误跳过。这些修改分别合入了 FlagGems、AIPerf 和 Relax。
+> 我最近还做了一些开源贡献。比如在 FlagGems 里修复了 GQA 注意力的兼容问题，在 AIPerf 里修复了多轮对话压测的数据采样和请求到达节奏问题。这几个 PR 都已经合并了。另外，我还给 SGLang 和 llama.cpp 提交过 PR，目前还在 Review。
 >
-> 另外，我还给 SGLang 和 llama.cpp 提交过推理链路延迟和采样内存相关的 PR，目前还在 Review。
->
-> 我希望继续在推理引擎的适配、性能优化和 Runtime 方向做更深入的工作。”
+> 这次应聘推理引擎研发实习，希望继续做推理框架适配和性能优化。”
 
-**这样说的原因：** 先让面试官知道方向与实际技术栈，再用一个代表项目和四个已合并 PR 证明做过什么。GPU 算子仅作为实际参加过的赛题和项目技能，不把自己包装成专职 Kernel 开发人员。
+**口述顺序**：学校与方向 → 实际技术栈 → 一个代表项目 → 最近完成的开源贡献 → 求职意向。正常说出项目名字即可，不需要在自我介绍中报 PR 编号或背测试细节。
 
-**四个近期合并的 PR，追问时再展开：**
-- **注意力算子**：FlagGems [#9124](https://github.com/flagos-ai/FlagGems/pull/9124)。通用 SDPA math 路径原本在 GQA 的接口和 K/V Head 映射上有兼容问题；你补齐了接口处理和测试。已合并，但未在 Sunrise/PTPU 实卡上验证。
-- **压测数据准确性**：NVIDIA AIPerf [#1626](https://github.com/ai-dynamo/aiperf/pull/1626)。合成多轮对话时，原来没有按设定的轮数和轮间停顿分布正确采样；你修正了生成过程和相关回归测试。
-- **请求到达节奏**：NVIDIA AIPerf [#1674](https://github.com/ai-dynamo/aiperf/pull/1674)。区分“新会话进入”和“已有会话继续”，让多轮压测能分别控制新会话到达速度与后续轮次的等待方式。
-- **CPU 测试环境隔离**：Relax [#523](https://github.com/redai-studio/Relax/pull/523)。原来的 CPU 回退测试可能因为宿主机能检测到 GPU 而被跳过；你让测试在 CPU 和 CUDA 环境下都能执行，原始 PR 记录两种环境各 41 项通过。**这是测试代码隔离，不是修复运行时推理在 CPU 上失败。**
+**三个近期已合并的 PR，面试官追问时再展开：**
+- FlagGems [#9124](https://github.com/flagos-ai/FlagGems/pull/9124)：修复通用 SDPA math 路径对 GQA 的接口兼容及 K/V 头映射问题；未在 Sunrise/PTPU 实卡上验证。
+- NVIDIA AIPerf [#1626](https://github.com/ai-dynamo/aiperf/pull/1626)：修复合成多轮对话的轮数、轮间延迟分布采样。
+- NVIDIA AIPerf [#1674](https://github.com/ai-dynamo/aiperf/pull/1674)：区分新会话到达和已有会话的后续请求，让压测负载的时间安排更准确。
 
-**仍在 Review：** SGLang [#46596](https://github.com/sgl-project/sglang/pull/46596) 和 llama.cpp [#29576](https://github.com/ggml-org/llama.cpp/pull/29576)，不要和四个已合并 PR 混淆。
+**仍在 Review**：SGLang [#46596](https://github.com/sgl-project/sglang/pull/46596)、llama.cpp [#29576](https://github.com/ggml-org/llama.cpp/pull/29576)。不把未合并的 PR 说成已合并。
 
-**进一步追问时：** GraphBudget 的 72.4% 是指定负载下 5 组 A/B 配对吞吐提升的中位数，不是对任意模型、设备的普遍提升。对项目名称不熟悉的面试官，先说清楚改了什么、解决了什么问题，再报仓库名和 PR 编号。
+**追问时再讲**：GraphBudget 的 72.4% 是固定负载下 5 组 A/B 配对吞吐提升的中位数；不能推断所有场景都有相同收益。
 
 ---
 
