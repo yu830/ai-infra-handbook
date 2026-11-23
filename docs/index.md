@@ -92,25 +92,27 @@
 
 > “面试官您好，我是哈尔滨工程大学电子信息工程专业的 28 届本科生。
 >
-> 之前我在 openEuler 社区参与过数据库兼容性问题的定位和修复，也做过 FlagOS 的 Triton 算子优化赛题。最近主要在做大模型推理系统相关的项目。技术上常用 Python、C++ 和 Triton，平时也会看 SGLang 的源码，做一些推理链路分析和性能测试。
+> 我主要做大模型推理系统相关的项目和开源贡献。平时主要用 Python，也接触过 PyTorch、Triton 和 SGLang，会看推理流程和 GPU 执行时间线。之前还参加过 FlagOS 的 SGLang 算子优化赛题。
 >
-> GraphBudget 是我投入比较多的一个项目。我针对 SGLang 确定性 Decode 阶段的小矩阵乘法调整了 Triton 分块，在固定负载下，输出吞吐提高了大约 72%。
+> 项目方面，比较有代表性的是 GraphBudget。我针对 SGLang 确定性 Decode 阶段的小矩阵乘法调整了 Triton 分块，在固定测试负载下，输出吞吐提高了大约 72%。
 >
-> 开源方面，最近有四个 PR 合并了：FlagGems 的 GQA 注意力兼容修复、AIPerf 的两项多轮对话压测改进，以及 Relax 的 CPU Fallback 测试隔离。另外，我在 SGLang 和 llama.cpp 也有正在 Review 的 PR，分别涉及推理链路延迟和采样内存。
+> 开源方面，最近有四个 PR 合并了。主要解决过三类问题：一个是注意力计算对 GQA 的兼容问题；两个是让多轮对话压测的数据分布和请求到达节奏更准确；还有一个是让 CPU 相关测试在装了 GPU 的机器上也不会被错误跳过。这些修改分别合入了 FlagGems、AIPerf 和 Relax。
 >
-> 这次应聘推理引擎研发实习，希望继续做推理框架适配、Runtime 优化和性能分析。”
+> 另外，我还给 SGLang 和 llama.cpp 提交过推理链路延迟和采样内存相关的 PR，目前还在 Review。
+>
+> 我希望继续在推理引擎的适配、性能优化和 Runtime 方向做更深入的工作。”
 
-**为什么这样安排：** 从过去参与的 openEuler 和 FlagOS 经历讲起，再讲现在的推理项目；把 Python、C++、Triton 说清楚，但不把自己介绍成专职 GPU Kernel 工程师。代表项目只保留一个核心结果，其他经历用合并的开源贡献说明工程能力。
+**这样说的原因：** 先让面试官知道方向与实际技术栈，再用一个代表项目和四个已合并 PR 证明做过什么。GPU 算子仅作为实际参加过的赛题和项目技能，不把自己包装成专职 Kernel 开发人员。**自我介绍里不提 openEuler 或 C++。**
 
-**近期已合并 PR（不用在自我介绍里背编号）：**
-- FlagGems [#9124](https://github.com/flagos-ai/FlagGems/pull/9124)：通用 SDPA math 路径的 GQA 接口与 K/V 头映射修复；没有在 Sunrise/PTPU 实卡上验证。
-- NVIDIA AIPerf [#1626](https://github.com/ai-dynamo/aiperf/pull/1626)：多轮合成数据的轮数、间隔分布采样。
-- NVIDIA AIPerf [#1674](https://github.com/ai-dynamo/aiperf/pull/1674)：新会话开始与后续轮次的请求到达节奏。
-- Relax [#523](https://github.com/redai-studio/Relax/pull/523)：CPU Fallback 测试不再被宿主机加速器状态影响。
+**四个近期合并的 PR，追问时再展开：**
+- **注意力算子**：FlagGems [#9124](https://github.com/flagos-ai/FlagGems/pull/9124)。通用 SDPA math 路径原本在 GQA 的接口和 K/V Head 映射上有兼容问题；你补齐了接口处理和测试。已合并，但未在 Sunrise/PTPU 实卡上验证。
+- **压测数据准确性**：NVIDIA AIPerf [#1626](https://github.com/ai-dynamo/aiperf/pull/1626)。合成多轮对话时，原来没有按设定的轮数和轮间停顿分布正确采样；你修正了生成过程和相关回归测试。
+- **请求到达节奏**：NVIDIA AIPerf [#1674](https://github.com/ai-dynamo/aiperf/pull/1674)。区分“新会话进入”和“已有会话继续”，让多轮压测能分别控制新会话到达速度与后续轮次的等待方式。
+- **CPU 测试环境隔离**：Relax [#523](https://github.com/redai-studio/Relax/pull/523)。原来的 CPU 回退测试可能因为宿主机能检测到 GPU 而被跳过；你让测试在 CPU 和 CUDA 环境下都能执行，原始 PR 记录两种环境各 41 项通过。**这是测试代码隔离，不是修复运行时推理在 CPU 上失败。**
 
-**仍在 Review：** SGLang [#46596](https://github.com/sgl-project/sglang/pull/46596) 和 llama.cpp [#29576](https://github.com/ggml-org/llama.cpp/pull/29576)。这两项只能说“提交了 PR，正在 Review”，不能放进“已合并的四个”里面。
+**仍在 Review：** SGLang [#46596](https://github.com/sgl-project/sglang/pull/46596) 和 llama.cpp [#29576](https://github.com/ggml-org/llama.cpp/pull/29576)，不要和四个已合并 PR 混淆。
 
-**面试追问时才展开：** GraphBudget 的 72.4% 是固定负载下五组 A/B 配对吞吐提升的中位数；FlagOS 只说实际做过的赛题与测试，不夸大成长期从事 GPU 算子研发。面试官问具体技术栈时，分别讲自己做过什么，不用泛泛地说“精通 CUDA、Triton”。
+**进一步追问时：** GraphBudget 的 72.4% 是指定负载下 5 组 A/B 配对吞吐提升的中位数，不是对任意模型、设备的普遍提升。对项目名称不熟悉的面试官，先说清楚改了什么、解决了什么问题，再报仓库名和 PR 编号。
 
 ---
 
