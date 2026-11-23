@@ -476,3 +476,164 @@
 > “Systems 先告诉我整条推理链路哪里耗时；Compute 再告诉我一个具体 Kernel 为什么慢。比如先发现某个 GEMM 占了大部分 GPU 时间，再去看它的 DRAM 吞吐、SM 吞吐、Occupancy 和内存事务效率。”
 
 **继续追问**：GPU 时间线排得密并不能证明饱和；采样结果、Profiler 的采集开销、CUDA Graph 执行路径也会影响解读。
+
+### 3.3 Python、C++、Triton、PyTorch 与 NumPy：简历写了就要会答
+
+#### Q17. 简历写“熟悉 Python”，面试官最容易从哪问？
+
+**直接回答：**
+
+> “Python 我主要用来处理数据、写测试和调模型或算子。平时做性能实验，会用脚本固定输入、重复运行、整理统计结果；做回归测试时会关心异常是否真的被暴露，而不是一失败就直接跳过。”
+
+**继续追问**：可变与不可变对象、`list`/`dict`、生成器、上下文管理器、浅拷贝/深拷贝、`try/finally`，以及多进程与多线程的区别。面试官可能随手给一段代码问执行结果；**“熟悉 Python”不能只靠会调 AI 工具**。
+
+#### Q18. 简历写“熟悉 C++”，但自我介绍不主动提，面试官还是能问什么？
+
+**直接回答：**
+
+> “C++ 相关的经历主要在阅读和修改现有工程代码。我会从内存生命周期、对象所有权和数据布局去理解问题，例如主机缓冲区重分配前，得确认异步拷贝已经完成。我不会把自己包装成长期做高性能 C++ 底层开发的人。”
+
+**基础必须补齐**：`pointer` 和 `reference` 的区别；`const T&` 为什么能避免拷贝；`std::vector` 扩容为什么可能让旧指针失效；RAII 为什么用于管理资源；`unique_ptr` 与 `shared_ptr` 的所有权区别；栈上对象和动态分配对象的生命周期；编译与链接分别做什么。**不要把“写过 Python 调用的 C++ 扩展”直接说成掌握全部 C++ 并发知识。**
+
+#### Q19. PyTorch Tensor 与 NumPy ndarray 的主要区别是什么？
+
+**直接回答：**
+
+> “它们都能表示带 Shape、Dtype、Stride 的多维数组。NumPy 通常在 CPU 上做数值计算；PyTorch Tensor 可以放在 GPU 上，而且能配合 Autograd 自动求梯度。我做算子正确性测试时，会先用 PyTorch 原生实现算参考结果，再把自定义 Kernel 的输出和它比较。”
+
+**继续追问**：`shape`、`dtype`、`device`、`stride`、`storage_offset`，广播与类型提升。`torch.allclose` 是带容差比较；想测**完全一样**可以用 `torch.equal` / 精确容差，但要先确认目标是否真要求逐 bit 一致。`NumPy` 到 GPU Tensor 不一定零拷贝，需考虑设备传输。
+
+#### Q20. 为什么张量转置后常常不是 Contiguous？Stride 是什么？
+
+**直接回答：**
+
+> “Stride 决定一个维度的索引加一时，内存地址要跳多少个元素。转置通常只是改变 Shape 和 Stride，并没有把数据真的搬走，所以新的视图可能不是连续内存。如果 Kernel 还按线性连续布局去读，就可能读错。遇到这种情况，要么按真实 Stride 算地址，要么先转成连续布局。”
+
+**继续追问**：`expand` 可能产生 **zero stride**，很多逻辑元素实际共享同一个存储位置；`transpose` 改变轴顺序；`contiguous()` 对已经连续的 Tensor 通常不额外复制，对不连续的 Tensor 则可能分配新存储并拷贝。FlagGems `slice_backward` 就是这个问题的真实案例。
+
+#### Q21. PyTorch Autograd 是怎么工作的？为什么推理要关掉梯度？
+
+**直接回答：**
+
+> “训练时 PyTorch 会记录需要梯度的运算关系，反向传播再按链式法则求每个参数的梯度。纯推理没有反向更新的需求，通常会用 `no_grad` 或 `inference_mode` 避免构建不必要的梯度计算。这样能减少开销，但不等于所有 Tensor 一下都不用占显存了。”
+
+**继续追问**：`requires_grad`、计算图、`backward()`、梯度累积、`zero_grad`。`inference_mode` 比 `no_grad` 有更强的限制与优化，不能不看代码就随意替换在训练流程中会复用的 Tensor。
+
+#### Q22. Python 有 GIL，为什么还能做 GPU 推理调度？
+
+**直接回答：**
+
+> “模型的矩阵计算实际上交给 GPU 或底层算子执行，并不是 Python 一条指令一条指令地算，所以 GIL 不代表 GPU 只能跑一个任务。但如果每一步 GPU 工作很短，Python 的请求管理、数据准备、Kernel 发射也可能让 GPU 等它。可以通过多进程拆分、减少不必要的同步，或者 CUDA Graph 来降低这部分开销。”
+
+**继续追问**：GIL 主要约束同一 CPython 解释器中 Python 字节码的并行执行，具体版本与扩展行为有差异；CPU API 调用、线程等待、CUDA 异步执行是不同层次。
+
+#### Q23. 面试官让你手写 Triton，至少应该先写出什么？
+
+**直接回答：**
+
+> “我先确认输入形状和数据类型，决定一个 Program 负责多少元素，再用 Program ID 和块内索引找到自己的数据。Load、Store 都处理好越界 Mask，最后选择合理的 Block Size 启动。先验证结果，再做性能优化。”
+
+下面这个**教学例子**是最简一维逐元素加法（不是声称你一面选的那道题）。需要安装 PyTorch、Triton 且有支持的 GPU 才能实际运行：
+
+```python
+import torch
+import triton
+import triton.language as tl
+
+@triton.jit
+def add_kernel(A, B, C, N: tl.constexpr, BLOCK: tl.constexpr):
+    idx = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    mask = idx < N
+    a = tl.load(A + idx, mask=mask, other=0)
+    b = tl.load(B + idx, mask=mask, other=0)
+    tl.store(C + idx, a + b, mask=mask)
+
+def add(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    if a.shape != b.shape or a.dtype != b.dtype or a.device != b.device:
+        raise ValueError("shape, dtype and device must match")
+    if not a.is_cuda or not a.is_contiguous() or not b.is_contiguous():
+        raise ValueError("this simple kernel requires contiguous CUDA tensors")
+    out = torch.empty_like(a)
+    n = a.numel()
+    add_kernel[(triton.cdiv(n, 256),)](a, b, out, n, 256)
+    return out
+
+x = torch.arange(1031, device="cuda", dtype=torch.float32)
+y = x * 2
+torch.testing.assert_close(add(x, y), x + y)
+```
+
+**继续追问**：为什么 `n=1031` 不能直接用 4 个 Program 每个 256 元素处理？因为需要 `ceil(1031/256)=5` 个 Program，最后一个用 Mask 防止越界。再被问非连续 Tensor，就应明确这个简单版本**不支持**，需要额外传 Stride 或改成连续后再调用；不能装作所有布局都支持。
+
+### 3.4 推理框架、CUDA Graph、KV Cache：简历每个词都能问
+
+#### Q24. SGLang 接到一个请求后，大致经过哪些模块？
+
+**直接回答：**
+
+> “用户请求进来后，先由接入和 Tokenizer 处理，再交给 Scheduler。Scheduler 决定哪些请求这轮能跑、需要多少 KV 空间，然后 GPU Worker 执行模型前向和采样；最后 Detokenizer 把生成的 Token 转成文本，流式返回。服务慢了，要看排队、调度、GPU 和消息传递各占多少。”
+
+**继续追问**：Tokenizer Manager、Scheduler、Detokenizer Manager、Router 分别做什么；ZMQ 用在哪些进程间通道；多 Detokenizer Worker 为什么要考虑路由与 IPC 等待。不要说“SGLang 整个 Scheduler 都常驻 GPU”——调度控制逻辑在 CPU，模型计算在 GPU。
+
+#### Q25. SGLang 和 llama.cpp 有什么区别？你各接触了哪一部分？
+
+**直接回答：**
+
+> “SGLang 更偏向高吞吐的推理服务，重点有调度、连续批处理、KV 管理和多进程通信。llama.cpp 则提供更广泛设备和量化模型上的本地推理执行。我的 SGLang PR 关注 Scheduler 到 Detokenizer Router 的消息交付延迟；llama.cpp PR 关注采样结果回主机时不必要的缓冲区占用。两者都是推理系统，但我改的是不同环节。”
+
+**继续追问**：SGLang 的服务生命周期和 llama.cpp 的模型加载、GGUF、采样主机缓冲是不同层次。改过一个模块不等于对整个框架都很熟悉。
+
+#### Q26. Prefill 和 Decode 为什么瓶颈经常不一样？
+
+**直接回答：**
+
+> “Prefill 需要一次处理整段输入，矩阵乘法一般比较大，算力更容易被充分利用。Decode 是逐步生成，每轮处理的 Token 数较少，却还要读模型权重和历史 KV，容易更受带宽或 Kernel 发射开销影响。所以做算子优化时，Prefill 的最优分块不一定适合 Decode。”
+
+**继续追问**：TTFT 是请求进入系统到首 Token 返回的时间，不等于纯 Prefill Kernel 时长；TPOT/ITL 和整体吞吐需要分别测，且长上下文下 Attention 的 KV 访问可能成为主要瓶颈。
+
+#### Q27. KV Cache 存的是什么？为什么 GQA 能省显存？
+
+**直接回答：**
+
+> “自回归生成时，后面的 Token 会关注之前的 Token。如果每生成一个新 Token 都重新计算全部历史的 Key 和 Value，会浪费很多计算。KV Cache 就是把以前的 K、V 保存下来，下一步直接读取。GQA 让多个 Query Head 共享较少的 K/V Head，因此 KV Cache 的体积可以显著减少。”
+
+**继续追问和速算**：普通 Transformer KV 存储的简单估算：
+
+```text
+每 Token 的 KV 字节数
+= 2 × 层数 L × KV Head 数 n_kv × Head Dim d_h × 每元素字节数 p
+```
+
+例如 `L=32, n_kv=8, d_h=128, p=2`，每 Token 约 **128 KiB**，4096 Token 约 **512 MiB**（忽略分页、分配器和其他开销）。这是完整模型范围的逻辑 KV 量；多卡 TP 的实际单卡占用还取决于 KV Head 如何分片。
+
+#### Q28. PagedAttention、Prefix Cache 和 RadixAttention 是一回事吗？
+
+**直接回答：**
+
+> “不完全一样。PagedAttention 主要解决 KV 的显存分配问题：逻辑上是一整段序列，物理上可以分散在不同的固定大小 Block 里。Prefix Cache 关心的是相同前缀能不能重复利用已经算过的 KV。RadixAttention 则用前缀树组织缓存，适合多轮对话或大量共享 Prompt 的情况。这些机制可以相互配合。”
+
+**继续追问**：页大小太小会增加管理和索引开销；太大容易出现内部碎片。前缀缓存需要考虑 Token、位置、模型参数和缓存有效性，不能只比较两段文本表面是否相同。
+
+#### Q29. Continuous Batching 和普通 Batching 差在哪？
+
+**直接回答：**
+
+> “普通静态 Batch 一批请求一起进来，通常要等整批完成后才能处理下一批。Continuous Batching 在每个生成步骤都可以把结束的请求移出去、把新请求加进来，不必一直等最长的那个请求。它提高的是服务调度的灵活性，但也会增加 KV 分配和请求状态管理的复杂度。”
+
+**继续追问**：为什么新加入的长 Prefill 可能影响已在 Decode 的请求？怎样通过 Chunked Prefill 分摊长 Prompt 的影响？为什么显存不足时不能无限加新请求？
+
+#### Q30. CUDA Graph 为什么能加速？什么时候不能用？
+
+**直接回答：**
+
+> “普通模式下 CPU 每一步都要向 GPU 提交一串 Kernel，Kernel 本身很快时，提交动作就会很明显。CUDA Graph 是把一组已经确定执行依赖的 GPU 操作先捕获成图，以后直接回放，减少重复发射开销。但图对内存地址、操作行为、动态形状和同步有要求，捕获本身也会占显存，不是每条请求都适合直接录成一个完整图。”
+
+**继续追问**：捕获前为什么要 Warm-up？为什么要固定或管理输入地址？为什么一些模型采用离散 Batch Size 捕获点和 Padding？Full 与 Piecewise Graph 的选择要看 Attention Backend 及具体实现，不是简单地“纯 Decode 一定 Full”。
+
+#### Q31. CUDA Graph、Kernel Fusion、Tiling 分别优化什么？
+
+**直接回答：**
+
+> “它们不是同一层优化。CUDA Graph 主要减少 CPU 反复发起 GPU 工作的开销；Kernel Fusion 是把相邻计算合在一起，减少中间 Tensor 和多次 Kernel Launch；Tiling 是在一个算子里安排数据怎么分块、怎么复用。要先知道性能卡在哪，再选手段。”
+
+**继续追问**：如果 Kernel 已经长时间受显存带宽限制，CUDA Graph 未必改善多少；如果融合导致寄存器压力过大，也可能比拆开的 Kernel 更慢。
